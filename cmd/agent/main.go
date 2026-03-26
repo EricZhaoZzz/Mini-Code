@@ -29,6 +29,7 @@ func main() {
 	fmt.Println("Mini-Claw 已启动，输入你的任务。输入 exit 或 quit 退出。")
 
 	scanner := bufio.NewScanner(os.Stdin)
+
 	for {
 		fmt.Print("> ")
 
@@ -47,12 +48,18 @@ func main() {
 			break
 		}
 
-		if err := engine.Run(ctx, input); err != nil {
-			fmt.Printf("程序运行失败: %v\n", err)
+		engine.AddUserMessage(input)
+
+		reply, err := engine.RunTurn(ctx)
+		if err != nil {
+			fmt.Printf("运行失败: %v\n", err)
+			continue
 		}
 
-		if err := scanner.Err(); err != nil {
-			fmt.Printf("读取输入失败: %v\n", err)
-		}
+		fmt.Printf("\nMini-Claw: %s\n\n", reply)
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("读取输入失败: %v\n", err)
 	}
 }
