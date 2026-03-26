@@ -22,17 +22,22 @@ func WriteFile(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
-	if dir := filepath.Dir(params.Path); dir != "." {
+	targetPath, err := resolveWorkspacePath(params.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	if dir := filepath.Dir(targetPath); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("创建目录失败: %w", err)
 		}
 	}
 
-	if err := os.WriteFile(params.Path, []byte(params.Content), 0o644); err != nil {
+	if err := os.WriteFile(targetPath, []byte(params.Content), 0o644); err != nil {
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
 
-	return fmt.Sprintf("文件已写入: %s", params.Path), nil
+	return fmt.Sprintf("文件已写入: %s", displayPath(targetPath)), nil
 }
 
 type ReadFileArguments struct {
@@ -45,7 +50,12 @@ func ReadFile(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(params.Path)
+	targetPath, err := resolveWorkspacePath(params.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(targetPath)
 	if err != nil {
 		return nil, fmt.Errorf("读取文件失败: %w", err)
 	}
@@ -63,13 +73,13 @@ func ListFiles(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
-	root := strings.TrimSpace(params.Path)
-	if root == "" {
-		root = "."
+	rootPath, err := resolveWorkspacePath(params.Path)
+	if err != nil {
+		return nil, err
 	}
 
 	var files []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -82,7 +92,7 @@ func ListFiles(args interface{}) (interface{}, error) {
 			return nil
 		}
 
-		files = append(files, path)
+		files = append(files, displayPath(path))
 		return nil
 	})
 	if err != nil {
@@ -107,9 +117,9 @@ func SearchInFiles(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
-	root := strings.TrimSpace(params.Path)
-	if root == "" {
-		root = "."
+	rootPath, err := resolveWorkspacePath(params.Path)
+	if err != nil {
+		return nil, err
 	}
 
 	query := strings.TrimSpace(params.Query)
@@ -120,7 +130,7 @@ func SearchInFiles(args interface{}) (interface{}, error) {
 	var matches []string
 	const limit = 50
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -144,7 +154,7 @@ func SearchInFiles(args interface{}) (interface{}, error) {
 		lines := strings.Split(string(data), "\n")
 		for i, line := range lines {
 			if strings.Contains(line, query) {
-				matches = append(matches, fmt.Sprintf("%s:%d: %s", path, i+1, strings.TrimSpace(line)))
+				matches = append(matches, fmt.Sprintf("%s:%d: %s", displayPath(path), i+1, strings.TrimSpace(line)))
 				if len(matches) >= limit {
 					return fs.SkipAll
 				}
@@ -191,12 +201,18 @@ func RunShell(args interface{}) (interface{}, error) {
 		cmd = exec.Command("sh", "-c", params.Command)
 	}
 
+	root, err := workspaceRoot()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Dir = root
+
 	var stdout strings.Builder
 	var stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	output := stdout.String()
 	if stderr.Len() > 0 {
 		output += "\n[stderr]: " + stderr.String()

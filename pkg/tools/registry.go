@@ -17,6 +17,7 @@ func init() {
 	register("list_files", "列出目录下的文件", ListFilesArguments{}, ListFiles)
 	register("search_in_files", "在目录下搜索文本", SearchInFilesArguments{}, SearchInFiles)
 	register("run_shell", "运行 shell 命令", RunShellArguments{}, RunShell)
+	register("replace_in_file", "在文件中局部替换文本，只替换第一个匹配项", ReplaceInFileArguments{}, ReplaceInFile)
 }
 
 func register(name, description string, args interface{}, executor ToolExecutor) {

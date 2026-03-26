@@ -13,6 +13,7 @@ config.json
 # Go 测试缓存
 *.test
 *.out
+*.log
 
 # Go 模块缓存（本地开发）
 vendor/
