@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"mini-claw/pkg/agent"
 	_ "mini-claw/pkg/tools"
+	"os"
+	"strings"
 
 	"github.com/sashabaranov/go-openai"
 )
@@ -19,8 +23,36 @@ func main() {
 	client := openai.NewClientWithConfig(config)
 
 	ctx := context.Background()
+
 	engine := agent.NewClawEngine(client, ModelID)
 
-	// engine.Run(ctx, "请用中文写一个hello world程序")
-	engine.Run(ctx, "在当前目录下创建一个 test 文件夹，里面写一个 data.txt，内容是 'Go Agent 运行正常'，然后读取它确认内容。")
+	fmt.Println("Mini-Claw 已启动，输入你的任务。输入 exit 或 quit 退出。")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("> ")
+
+		if !scanner.Scan() {
+			fmt.Println("\n输入已结束, 程序退出。")
+			break
+		}
+
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		if input == "exit" || input == "quit" {
+			fmt.Println("Bye.")
+			break
+		}
+
+		if err := engine.Run(ctx, input); err != nil {
+			fmt.Printf("程序运行失败: %v\n", err)
+		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("读取输入失败: %v\n", err)
+		}
+	}
 }
