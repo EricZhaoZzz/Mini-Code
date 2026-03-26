@@ -7,26 +7,31 @@ import (
 	"mini-claw/pkg/agent"
 	_ "mini-claw/pkg/tools"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sashabaranov/go-openai"
 )
 
 func main() {
-	apiKey := os.Getenv("DASHSCOPE_API_KEY")
+	loadDotEnv(".env")
+
+	apiKey := os.Getenv("API_KEY")
 	if apiKey == "" {
-		fmt.Println("缺少环境变量 DASHSCOPE_API_KEY")
+		fmt.Println("缺少环境变量 API_KEY")
 		os.Exit(1)
 	}
 
-	baseURL := os.Getenv("DASHSCOPE_BASE_URL")
+	baseURL := os.Getenv("BASE_URL")
 	if baseURL == "" {
-		baseURL = "https://coding.dashscope.aliyuncs.com/v1"
+		fmt.Println("缺少环境变量 BASE_URL")
+		os.Exit(1)
 	}
 
-	modelID := os.Getenv("DASHSCOPE_MODEL")
+	modelID := os.Getenv("MODEL")
 	if modelID == "" {
-		modelID = "qwen3-coder-next"
+		fmt.Println("缺少环境变量 MODEL")
+		os.Exit(1)
 	}
 
 	config := openai.DefaultConfig(apiKey)
@@ -70,5 +75,38 @@ func main() {
 
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("读取输入失败: %v\n", err)
+	}
+}
+
+func loadDotEnv(path string) {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+
+		_ = os.Setenv(key, value)
 	}
 }
