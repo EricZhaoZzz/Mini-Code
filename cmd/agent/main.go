@@ -22,5 +22,5 @@ func main() {
 	engine := agent.NewClawEngine(client, ModelID)
 
 	// engine.Run(ctx, "请用中文写一个hello world程序")
-	engine.Run(ctx, "在当前目录下创建一个 test_data 文件夹，里面写一个 info.txt，内容是 'Go Agent 运行正常'，然后读取它确认内容。")
+	engine.Run(ctx, "在当前目录下创建一个 test 文件夹，里面写一个 data.txt，内容是 'Go Agent 运行正常'，然后读取它确认内容。")
 }

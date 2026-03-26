@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -18,6 +19,11 @@ func WriteFile(args interface{}) (interface{}, error) {
 	var params WriteFileAugments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
+	}
+	if dir := filepath.Dir(params.Path); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("创建目录失败: %w", err)
+		}
 	}
 	if err := os.WriteFile(params.Path, []byte(params.Content), 0644); err != nil {
 		return nil, fmt.Errorf("写入文件失败: %w", err)
