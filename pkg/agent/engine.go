@@ -16,7 +16,10 @@ type ClawEngine struct {
 }
 
 func NewClawEngine(client *openai.Client, model string) *ClawEngine {
-	systemMessage := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt()}
+	systemMessage := openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleSystem,
+		Content: buildSystemPrompt(),
+	}
 
 	return &ClawEngine{
 		client:   client,
@@ -30,13 +33,15 @@ func buildSystemPrompt() string {
 	var shellHint string
 	switch osName {
 	case "windows":
-		shellHint = "shell 命令请使用 Windows CMD 语法（例如用 mkdir test_data 而非 mkdir -p test_data）。"
+		shellHint = "如果必须执行 shell 命令，请使用 Windows CMD 语法。"
 	default:
-		shellHint = "shell 命令请使用 Unix/bash 语法。"
+		shellHint = "如果必须执行 shell 命令，请使用 Unix shell 语法。"
 	}
+
 	return fmt.Sprintf(
-		"你是一个全栈开发助手 Mini-Claw。当前运行环境是 %s，%s优先使用 write_file 工具创建文件（它会自动创建目录），避免不必要的 shell 命令。",
-		osName, shellHint,
+		"你是一个中文 AI 编程助手 Mini-Claw。当前运行环境是 %s。%s 处理代码任务时，先使用 list_files、search_in_files、read_file 理解项目，再决定是否使用 write_file 或 run_shell。",
+		osName,
+		shellHint,
 	)
 }
 
@@ -48,13 +53,12 @@ func (e *ClawEngine) AddUserMessage(message string) {
 }
 
 func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
-	for i := 1; i < 10; i++ {
+	for i := 0; i < 10; i++ {
 		resp, err := e.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 			Model:    e.model,
 			Messages: e.messages,
 			Tools:    tools.Definitions,
 		})
-
 		if err != nil {
 			return "", fmt.Errorf("chat completion error: %w", err)
 		}
@@ -70,10 +74,10 @@ func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 			fmt.Printf("[tool] 正在执行: %s\n", toolCall.Function.Name)
 
 			executor := tools.Executors[toolCall.Function.Name]
-
 			var resultStr string
-			if executor != nil {
-				resultStr = fmt.Sprintf("错误: 位置的工具 %s", toolCall.Function.Name)
+
+			if executor == nil {
+				resultStr = fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
 			} else {
 				result, err := executor(toolCall.Function.Arguments)
 				output, _ := result.(string)

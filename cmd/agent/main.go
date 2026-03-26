@@ -13,28 +13,37 @@ import (
 )
 
 func main() {
+	apiKey := os.Getenv("DASHSCOPE_API_KEY")
+	if apiKey == "" {
+		fmt.Println("缺少环境变量 DASHSCOPE_API_KEY")
+		os.Exit(1)
+	}
 
-	apiKey := "sk-sp-5e6f8a1ab7cd4b0b9e596a0b26058c54"
+	baseURL := os.Getenv("DASHSCOPE_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://coding.dashscope.aliyuncs.com/v1"
+	}
+
+	modelID := os.Getenv("DASHSCOPE_MODEL")
+	if modelID == "" {
+		modelID = "qwen3-coder-next"
+	}
+
 	config := openai.DefaultConfig(apiKey)
-	config.BaseURL = "https://coding.dashscope.aliyuncs.com/v1"
-
-	ModelID := "qwen3-coder-next"
+	config.BaseURL = baseURL
 
 	client := openai.NewClientWithConfig(config)
-
+	engine := agent.NewClawEngine(client, modelID)
 	ctx := context.Background()
-
-	engine := agent.NewClawEngine(client, ModelID)
 
 	fmt.Println("Mini-Claw 已启动，输入你的任务。输入 exit 或 quit 退出。")
 
 	scanner := bufio.NewScanner(os.Stdin)
-
 	for {
 		fmt.Print("> ")
 
 		if !scanner.Scan() {
-			fmt.Println("\n输入已结束, 程序退出。")
+			fmt.Println("\n输入结束，程序退出。")
 			break
 		}
 
