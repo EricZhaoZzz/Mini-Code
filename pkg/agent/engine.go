@@ -86,6 +86,20 @@ func (e *ClawEngine) AddUserMessage(message string) {
 	})
 }
 
+// Reset 重置对话历史，保留系统消息
+func (e *ClawEngine) Reset() {
+	systemMessage := openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleSystem,
+		Content: buildSystemPrompt(),
+	}
+	e.messages = []openai.ChatCompletionMessage{systemMessage}
+}
+
+// GetMessageCount 返回当前消息数量
+func (e *ClawEngine) GetMessageCount() int {
+	return len(e.messages)
+}
+
 func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 	for i := 0; i < 10; i++ {
 		fmt.Printf("[turn] step=%d message_count=%d\n", i+1, len(e.messages))
