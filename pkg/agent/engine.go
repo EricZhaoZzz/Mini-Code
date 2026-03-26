@@ -10,14 +10,18 @@ import (
 )
 
 type ClawEngine struct {
-	client *openai.Client
-	model  string
+	client   *openai.Client
+	model    string
+	messages []openai.ChatCompletionMessage
 }
 
 func NewClawEngine(client *openai.Client, model string) *ClawEngine {
+	systemMessage := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt()}
+
 	return &ClawEngine{
-		client: client,
-		model:  model,
+		client:   client,
+		model:    model,
+		messages: []openai.ChatCompletionMessage{systemMessage},
 	}
 }
 
@@ -36,46 +40,45 @@ func buildSystemPrompt() string {
 	)
 }
 
-func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt()},
-		{Role: openai.ChatMessageRoleUser, Content: prompt},
-	}
+func (e *ClawEngine) AddUserMessage(message string) {
+	e.messages = append(e.messages, openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleUser,
+		Content: message,
+	})
+}
 
-	for i := 0; i < 10; i++ {
+func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
+	for i := 1; i < 10; i++ {
 		resp, err := e.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 			Model:    e.model,
-			Messages: messages,
+			Messages: e.messages,
 			Tools:    tools.Definitions,
 		})
 
 		if err != nil {
-			fmt.Printf("Chat Completion error: %v\n", err)
-			return err
+			return "", fmt.Errorf("chat completion error: %w", err)
 		}
-
-		fmt.Printf("🤖 [Agent response]: %s\n", resp.Choices[0].Message.Content)
 
 		msg := resp.Choices[0].Message
+		e.messages = append(e.messages, msg)
 
 		if len(msg.ToolCalls) == 0 {
-			fmt.Printf("\n🦞 MinClaw: %s\n", msg.Content)
-			break
+			return msg.Content, nil
 		}
 
-		messages = append(messages, msg)
 		for _, toolCall := range msg.ToolCalls {
-			fmt.Printf("🛠️  [Go 函数执行] 正在执行: %s\n", toolCall.Function.Name)
+			fmt.Printf("[tool] 正在执行: %s\n", toolCall.Function.Name)
+
 			executor := tools.Executors[toolCall.Function.Name]
 
 			var resultStr string
-			if executor == nil {
-				resultStr = fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
+			if executor != nil {
+				resultStr = fmt.Sprintf("错误: 位置的工具 %s", toolCall.Function.Name)
 			} else {
 				result, err := executor(toolCall.Function.Arguments)
 				output, _ := result.(string)
+
 				if err != nil {
-					fmt.Printf("❌ Error executing tool %s: %s\n", toolCall.Function.Name, err)
 					if output != "" {
 						resultStr = fmt.Sprintf("输出: %s\n错误: %s", output, err)
 					} else {
@@ -90,7 +93,7 @@ func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
 				}
 			}
 
-			messages = append(messages, openai.ChatCompletionMessage{
+			e.messages = append(e.messages, openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
 				Content:    resultStr,
 				ToolCallID: toolCall.ID,
@@ -98,5 +101,17 @@ func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
 		}
 	}
 
+	return "", fmt.Errorf("达到最大工具调用轮数，任务中止")
+}
+
+func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
+	e.AddUserMessage(prompt)
+
+	reply, err := e.RunTurn(ctx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nMini-Claw: %s\n\n", reply)
 	return nil
 }
