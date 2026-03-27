@@ -18,6 +18,7 @@
 - 🖥️ **交互式界面** - 支持命令历史、自动补全、彩色输出
 - 🔐 **安全设计** - 工作区路径限制，防止目录遍历攻击
 - 🌐 **OpenAI 兼容** - 支持任何 OpenAI 兼容的 API 端点
+- 🖧 **跨平台支持** - 支持 Windows、Linux、macOS
 
 ### ✅ 已实现功能
 
@@ -56,8 +57,9 @@
 
 ### 前置要求
 
-- Go 1.21 或更高版本
+- Go 1.26.1 或更高版本
 - OpenAI 兼容的 API 密钥
+- 确保已启用 Go 模块模式（GO111MODULE=on）
 
 ### 从源码构建
 
@@ -66,11 +68,38 @@
 git clone https://github.com/yourusername/mini-code.git
 cd mini-code
 
+# 确保启用 Go 模块模式（推荐设置为全局配置）
+go env -w GO111MODULE=on
+
 # 安装依赖
 go mod download
 
 # 编译
-go build -o mini-code ./cmd/agent
+go build -o mini-code.exe ./cmd/agent
+```
+
+### 常见问题
+
+**问题：编译报错 "package mini-code is not in std"**
+
+**原因：** Go 模块模式未启用，编译器尝试在标准库中查找包。
+
+**解决方案：**
+```bash
+# 方法1：设置全局 Go 模块模式（推荐）
+go env -w GO111MODULE=on
+
+# 方法2：仅为当前项目设置（在项目根目录创建 go.env 文件）
+echo "GO111MODULE=on" > go.env
+```
+
+**问题：找不到依赖包**
+
+**解决方案：**
+```bash
+# 清理并重新下载依赖
+go clean -modcache
+go mod download
 ```
 
 ## 🚀 快速开始
@@ -100,14 +129,24 @@ LM_MAX_TURNS=50
 ### 2. 运行
 
 ```bash
-# 直接运行
+# 直接运行（开发模式）
 go run ./cmd/agent
 
 # 或使用编译后的二进制
+# Windows:
+mini-code.exe
+# Linux/macOS:
 ./mini-code
 ```
 
 启动后直接输入任务即可开始对话。
+
+### 💡 Windows 用户注意
+
+在 Windows 上运行时：
+- 编译生成的可执行文件为 `mini-code.exe`
+- Shell 命令会使用 Windows CMD 语法
+- 路径分隔符自动适配为反斜杠 `\`
 
 ## 🛠️ 内置工具
 
@@ -117,35 +156,35 @@ Mini-Code 提供以下工具供 AI 助手使用：
 
 | 工具 | 描述 |
 |------|------|
-| `write_file` | 创建或修改文件 |
+| `write_file` | 创建或修改文件（完整内容写入） |
 | `read_file` | 读取文件内容 |
 | `list_files` | 列出目录下的文件 |
 | `search_in_files` | 在目录下搜索文本 |
-| `replace_in_file` | 局部替换文件内容 |
+| `replace_in_file` | 局部替换文件内容（只替换第一个匹配项） |
 | `rename_file` | 重命名/移动文件或目录 |
-| `delete_file` | 删除文件或目录 |
+| `delete_file` | 删除文件或目录（需确认参数） |
 | `copy_file` | 复制文件或目录 |
-| `create_directory` | 创建目录 |
+| `create_directory` | 创建目录（支持递归创建父目录） |
 | `get_file_info` | 获取文件详细信息（大小、修改时间、SHA256等） |
 
 ### 网络操作
 
 | 工具 | 描述 |
 |------|------|
-| `download_file` | 下载远程文件到本地 |
+| `download_file` | 下载远程文件到本地（支持超时设置） |
 
 ### Shell 命令
 
 | 工具 | 描述 |
 |------|------|
-| `run_shell` | 执行 shell 命令 |
+| `run_shell` | 执行 shell 命令（Windows 使用 CMD，Linux/macOS 使用 Bash） |
 
 ### Git 操作
 
 | 工具 | 描述 |
 |------|------|
 | `git_status` | 查看 Git 仓库状态 |
-| `git_diff` | 查看 Git 差异 |
+| `git_diff` | 查看 Git 差异（支持已暂存和未暂存变更） |
 | `git_log` | 查看 Git 提交历史 |
 
 ## ⌨️ 交互命令
@@ -216,13 +255,18 @@ mini-code/
 
 ## 🔧 开发指南
 
+### 环境要求
+
+- Go 1.26.1 或更高版本
+- Git（用于版本控制）
+
 ### 运行测试
 
 ```bash
 # 运行所有测试
 go test ./...
 
-# 运行特定包的测试
+# 运行特定包的测试并显示详细信息
 go test -v ./pkg/tools
 
 # 运行特定测试函数
@@ -230,12 +274,20 @@ go test -v ./pkg/tools -run TestWriteFile
 
 # 显示测试覆盖率
 go test -cover ./...
+
+# 生成覆盖率报告
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
 ```
 
 ### 代码格式化
 
 ```bash
+# 格式化所有代码
 gofmt -w ./cmd ./pkg
+
+# 检查代码规范
+go vet ./...
 ```
 
 ### 添加新工具
@@ -282,6 +334,21 @@ Mini-Code 遵循以下工作流程：
 2. **分析需求** - 理解任务目标，识别修改范围
 3. **执行修改** - 最小化修改，保持代码一致性
 4. **验证结果** - 运行测试验证正确性
+
+### 工作原理
+
+Mini-Code 作为一个 AI 编程助手，通过以下方式工作：
+
+1. **对话交互** - 用户输入任务描述或问题
+2. **工具调用** - AI 根据需求调用相应的工具（文件操作、Shell 命令等）
+3. **执行反馈** - 工具执行结果反馈给 AI，AI 根据结果继续工作
+4. **循环迭代** - 持续这个循环直到任务完成
+
+### 工具执行特性
+
+- **并发执行** - 多个独立的工具调用会并发执行，提高效率
+- **安全限制** - 所有文件操作限制在工作区内，防止意外访问系统文件
+- **错误处理** - 工具执行失败时会返回详细错误信息，AI 可以根据错误调整策略
 
 ## 🤝 贡献
 

@@ -18,6 +18,7 @@
 - 🖥️ **Interactive Interface** - Supports command history, auto-completion, and colored output
 - 🔐 **Security Design** - Workspace path restrictions to prevent directory traversal attacks
 - 🌐 **OpenAI Compatible** - Supports any OpenAI-compatible API endpoint
+- 🖧 **Cross-platform** - Supports Windows, Linux, and macOS
 
 ### ✅ Implemented Features
 
@@ -56,8 +57,9 @@
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.26.1 or higher
 - OpenAI-compatible API key
+- Ensure Go module mode is enabled (GO111MODULE=on)
 
 ### Build from Source
 
@@ -66,11 +68,38 @@
 git clone https://github.com/yourusername/mini-code.git
 cd mini-code
 
+# Ensure Go module mode is enabled (recommended to set globally)
+go env -w GO111MODULE=on
+
 # Install dependencies
 go mod download
 
 # Build
 go build -o mini-code ./cmd/agent
+```
+
+### Troubleshooting
+
+**Issue: Build error "package mini-code is not in std"**
+
+**Cause:** Go module mode is not enabled, compiler tries to find the package in the standard library.
+
+**Solution:**
+```bash
+# Method 1: Set global Go module mode (recommended)
+go env -w GO111MODULE=on
+
+# Method 2: Set for current project only (create go.env file in project root)
+echo "GO111MODULE=on" > go.env
+```
+
+**Issue: Cannot find dependency packages**
+
+**Solution:**
+```bash
+# Clean and re-download dependencies
+go clean -modcache
+go mod download
 ```
 
 ## 🚀 Quick Start
@@ -100,14 +129,24 @@ LM_MAX_TURNS=50
 ### 2. Run
 
 ```bash
-# Run directly
+# Run directly (development mode)
 go run ./cmd/agent
 
 # Or use compiled binary
+# Windows:
+mini-code.exe
+# Linux/macOS:
 ./mini-code
 ```
 
 Simply enter your task after startup to begin the conversation.
+
+### 💡 Windows Users Note
+
+When running on Windows:
+- The compiled executable will be `mini-code.exe`
+- Shell commands use Windows CMD syntax
+- Path separators are automatically adapted to backslash `\`
 
 ## 🛠️ Built-in Tools
 
@@ -117,35 +156,35 @@ Mini-Code provides the following tools for the AI assistant:
 
 | Tool | Description |
 |------|-------------|
-| `write_file` | Create or modify files |
+| `write_file` | Create or modify files (full content write) |
 | `read_file` | Read file contents |
 | `list_files` | List files in a directory |
 | `search_in_files` | Search text in files |
 | `replace_in_file` | Replace text in files (first match only) |
 | `rename_file` | Rename/move files or directories |
-| `delete_file` | Delete files or directories |
+| `delete_file` | Delete files or directories (requires confirmation) |
 | `copy_file` | Copy files or directories |
-| `create_directory` | Create directories |
+| `create_directory` | Create directories (supports recursive parent creation) |
 | `get_file_info` | Get detailed file information (size, modification time, SHA256, etc.) |
 
 ### Network Operations
 
 | Tool | Description |
 |------|-------------|
-| `download_file` | Download remote files to local |
+| `download_file` | Download remote files to local (supports timeout settings) |
 
 ### Shell Commands
 
 | Tool | Description |
 |------|-------------|
-| `run_shell` | Execute shell commands |
+| `run_shell` | Execute shell commands (CMD on Windows, Bash on Linux/macOS) |
 
 ### Git Operations
 
 | Tool | Description |
 |------|-------------|
 | `git_status` | View Git repository status |
-| `git_diff` | View Git differences |
+| `git_diff` | View Git differences (supports staged and unstaged changes) |
 | `git_log` | View Git commit history |
 
 ## ⌨️ Interactive Commands
@@ -216,13 +255,18 @@ mini-code/
 
 ## 🔧 Development Guide
 
+### Requirements
+
+- Go 1.26.1 or higher
+- Git (for version control)
+
 ### Run Tests
 
 ```bash
 # Run all tests
 go test ./...
 
-# Run tests for specific package
+# Run tests for specific package with verbose output
 go test -v ./pkg/tools
 
 # Run specific test function
@@ -230,12 +274,20 @@ go test -v ./pkg/tools -run TestWriteFile
 
 # Show test coverage
 go test -cover ./...
+
+# Generate coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
 ```
 
 ### Code Formatting
 
 ```bash
+# Format all code
 gofmt -w ./cmd ./pkg
+
+# Check code standards
+go vet ./...
 ```
 
 ### Adding New Tools
@@ -282,6 +334,21 @@ Mini-Code follows this workflow:
 2. **Analyze Requirements** - Understand task goals, identify modification scope
 3. **Execute Modifications** - Minimal changes, maintain code consistency
 4. **Verify Results** - Run tests to validate correctness
+
+### How It Works
+
+Mini-Code works as an AI programming assistant through:
+
+1. **Conversational Interaction** - Users input task descriptions or questions
+2. **Tool Invocation** - AI calls appropriate tools based on requirements (file operations, shell commands, etc.)
+3. **Execution Feedback** - Tool execution results are fed back to AI, which continues working based on results
+4. **Iterative Loop** - This cycle continues until the task is complete
+
+### Tool Execution Features
+
+- **Concurrent Execution** - Multiple independent tool calls are executed concurrently for efficiency
+- **Security Restrictions** - All file operations are restricted within the workspace to prevent accidental system file access
+- **Error Handling** - Detailed error information is returned when tools fail, allowing AI to adjust strategies
 
 ## 🤝 Contributing
 
