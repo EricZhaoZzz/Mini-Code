@@ -81,12 +81,15 @@ func main() {
 			break
 		}
 
-		// 显示思考中状态
-		fmt.Println("⏳ 正在处理...")
-
 		engine.AddUserMessage(input)
 
-		reply, err := engine.RunTurn(ctx)
+		fmt.Print("\n🤖 Mini-Claw: ")
+		_, err := engine.RunTurnStream(ctx, func(content string, done bool) error {
+			if !done && content != "" {
+				fmt.Print(content)
+			}
+			return nil
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -95,7 +98,7 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("\n🤖 Mini-Claw: %s\n\n", reply)
+		fmt.Printf("\n\n")
 	}
 
 	if err := scanner.Err(); err != nil {

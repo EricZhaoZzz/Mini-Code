@@ -33,6 +33,10 @@ func (f *fakeChatCompletionClient) CreateChatCompletion(_ context.Context, reque
 	return resp, nil
 }
 
+func (f *fakeChatCompletionClient) CreateChatCompletionStream(_ context.Context, request openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+	return nil, errors.New("CreateChatCompletionStream not implemented in fake client")
+}
+
 func TestRunTurnExecutesToolCallAndContinuesConversation(t *testing.T) {
 	const toolName = "test_echo_engine"
 

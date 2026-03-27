@@ -8,13 +8,19 @@ import (
 	"mini-claw/pkg/tools"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/sashabaranov/go-openai"
 )
 
+// StreamChunkHandler 流式响应处理回调
+// content 是累积的内容，done 表示是否完成
+type StreamChunkHandler func(content string, done bool) error
+
 type chatCompletionClient interface {
 	CreateChatCompletion(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
+	CreateChatCompletionStream(ctx context.Context, request openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error)
 }
 
 type ClawEngine struct {
@@ -191,6 +197,154 @@ func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("达到最大工具调用轮数，任务中止")
 }
 
+// RunTurnStream 流式执行一轮对话，支持流式输出
+// handler 用于处理流式内容块，当工具调用发生时会先完成流式输出，执行工具后再返回
+func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandler) (string, error) {
+	for i := 0; i < 10; i++ {
+		fmt.Printf("[turn-stream] step=%d message_count=%d\n", i+1, len(e.messages))
+
+		req := openai.ChatCompletionRequest{
+			Model:    e.model,
+			Messages: e.messages,
+			Tools:    tools.Definitions,
+		}
+		e.debugLog("LM INPUT", req)
+
+		stream, err := e.client.CreateChatCompletionStream(ctx, req)
+		if err != nil {
+			return "", fmt.Errorf("chat completion stream error: %w", err)
+		}
+		defer stream.Close()
+
+		var contentBuilder strings.Builder
+		var toolCalls []openai.ToolCall
+		var toolCallsDelta = make(map[int]*strings.Builder)
+
+		for {
+			response, err := stream.Recv()
+			if err != nil {
+				return "", fmt.Errorf("stream recv error: %w", err)
+			}
+
+			if len(response.Choices) == 0 {
+				continue
+			}
+
+			delta := response.Choices[0].Delta
+
+			// 处理内容
+			if delta.Content != "" {
+				contentBuilder.WriteString(delta.Content)
+				if handler != nil {
+					if err := handler(delta.Content, false); err != nil {
+						return "", err
+					}
+				}
+			}
+
+			// 处理工具调用
+			for _, tc := range delta.ToolCalls {
+				if tc.Index == nil {
+					continue
+				}
+				idx := *tc.Index
+				if _, exists := toolCallsDelta[idx]; !exists {
+					toolCallsDelta[idx] = &strings.Builder{}
+					toolCalls = append(toolCalls, openai.ToolCall{
+						ID:   tc.ID,
+						Type: tc.Type,
+						Function: openai.FunctionCall{
+							Name: tc.Function.Name,
+						},
+					})
+				}
+				if tc.Function.Arguments != "" {
+					toolCallsDelta[idx].WriteString(tc.Function.Arguments)
+				}
+			}
+
+			// 检查是否完成
+			if response.Choices[0].FinishReason != "" {
+				break
+			}
+		}
+
+		// 组装最终的 tool calls
+		for idx, builder := range toolCallsDelta {
+			if idx < len(toolCalls) {
+				toolCalls[idx].Function.Arguments = builder.String()
+			}
+		}
+
+		// 通知流结束
+		if handler != nil {
+			if err := handler(contentBuilder.String(), true); err != nil {
+				return "", err
+			}
+		}
+
+		e.debugLog("LM OUTPUT STREAM", map[string]interface{}{
+			"content":    contentBuilder.String(),
+			"tool_calls": len(toolCalls),
+		})
+
+		// 构建消息
+		msg := openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: contentBuilder.String(),
+		}
+		if len(toolCalls) > 0 {
+			msg.ToolCalls = toolCalls
+		}
+
+		fmt.Printf("[assistant-stream] content=%q tool_calls=%d\n", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
+		e.messages = append(e.messages, msg)
+
+		if len(toolCalls) == 0 {
+			return msg.Content, nil
+		}
+
+		// 执行工具调用
+		for _, toolCall := range msg.ToolCalls {
+			fmt.Printf("[tool-call] name=%s args=%s\n", toolCall.Function.Name, truncateForLog(toolCall.Function.Arguments, 400))
+
+			executor := tools.Executors[toolCall.Function.Name]
+			var resultStr string
+
+			if executor == nil {
+				resultStr = fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
+			} else {
+				result, err := executor(toolCall.Function.Arguments)
+				output, _ := result.(string)
+
+				if err != nil {
+					if output != "" {
+						resultStr = fmt.Sprintf("输出: %s\n错误: %s", output, err)
+					} else {
+						resultStr = fmt.Sprintf("错误: %s", err)
+					}
+				} else {
+					if output != "" {
+						resultStr = output
+					} else {
+						resultStr = fmt.Sprintf("%v", result)
+					}
+				}
+			}
+
+			fmt.Printf("[tool-result] name=%s result=%s\n", toolCall.Function.Name, truncateForLog(resultStr, 400))
+
+			e.messages = append(e.messages, openai.ChatCompletionMessage{
+				Role:       openai.ChatMessageRoleTool,
+				Content:    resultStr,
+				ToolCallID: toolCall.ID,
+			})
+		}
+	}
+
+	return "", fmt.Errorf("达到最大工具调用轮数，任务中止")
+}
+
 func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
 	e.AddUserMessage(prompt)
 
@@ -200,6 +354,25 @@ func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
 	}
 
 	fmt.Printf("\nMini-Claw: %s\n\n", reply)
+	return nil
+}
+
+// RunStream 流式执行对话
+func (e *ClawEngine) RunStream(ctx context.Context, prompt string, handler StreamChunkHandler) error {
+	e.AddUserMessage(prompt)
+
+	fmt.Printf("\nMini-Claw: ")
+	reply, err := e.RunTurnStream(ctx, handler)
+	if err != nil {
+		fmt.Printf("\n错误: %v\n\n", err)
+		return err
+	}
+
+	fmt.Printf("\n\n")
+	if reply != "" && handler == nil {
+		// 如果没有提供 handler，默认打印最终内容
+		fmt.Printf("%s\n", reply)
+	}
 	return nil
 }
 

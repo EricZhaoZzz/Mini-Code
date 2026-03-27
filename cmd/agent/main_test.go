@@ -27,6 +27,11 @@ func (m *mockChatCompletionClient) CreateChatCompletion(ctx context.Context, req
 	}, nil
 }
 
+// CreateChatCompletionStream 实现 chatCompletionClient 接口
+func (m *mockChatCompletionClient) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+	return nil, nil
+}
+
 // newTestEngine 创建测试用的 engine
 func newTestEngine() *agent.ClawEngine {
 	mockClient := &mockChatCompletionClient{}
