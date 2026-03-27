@@ -3,12 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"mini-claw/pkg/tools"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sashabaranov/go-openai"
@@ -24,10 +27,100 @@ type chatCompletionClient interface {
 }
 
 type ClawEngine struct {
-	client      chatCompletionClient
-	model       string
-	messages    []openai.ChatCompletionMessage
-	debugLogger *log.Logger
+	client         chatCompletionClient
+	model          string
+	messages       []openai.ChatCompletionMessage
+	debugLogger    *log.Logger
+	maxConcurrency int // 最大并发工具调用数
+}
+
+// toolCallResult 工具调用结果
+type toolCallResult struct {
+	index     int   // 原始顺序索引
+	toolCallID string
+	resultStr string
+	err       error
+}
+
+// executeToolCall 执行单个工具调用
+func (e *ClawEngine) executeToolCall(toolCall openai.ToolCall) (resultStr string) {
+	executor := tools.Executors[toolCall.Function.Name]
+
+	if executor == nil {
+		return fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
+	}
+
+	result, err := executor(toolCall.Function.Arguments)
+	output, _ := result.(string)
+
+	if err != nil {
+		if output != "" {
+			resultStr = fmt.Sprintf("输出: %s\n错误: %s", output, err)
+		} else {
+			resultStr = fmt.Sprintf("错误: %s", err)
+		}
+	} else {
+		if output != "" {
+			resultStr = output
+		} else {
+			resultStr = fmt.Sprintf("%v", result)
+		}
+	}
+
+	return resultStr
+}
+
+// executeToolCallsConcurrently 并发执行工具调用，结果按原始顺序返回
+func (e *ClawEngine) executeToolCallsConcurrently(ctx context.Context, toolCalls []openai.ToolCall) []toolCallResult {
+	results := make([]toolCallResult, len(toolCalls))
+	
+	// 确定并发数
+	maxConcurrency := e.maxConcurrency
+	if maxConcurrency <= 0 {
+		maxConcurrency = 5 // 默认最大并发数
+	}
+	if maxConcurrency > len(toolCalls) {
+		maxConcurrency = len(toolCalls)
+	}
+
+	// 使用信号量控制并发
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for i, tc := range toolCalls {
+		wg.Add(1)
+		go func(index int, toolCall openai.ToolCall) {
+			defer wg.Done()
+			
+			// 获取信号量
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// 检查上下文是否已取消
+			select {
+			case <-ctx.Done():
+				results[index] = toolCallResult{
+					index:      index,
+					toolCallID: toolCall.ID,
+					resultStr:  fmt.Sprintf("错误: 操作已取消 - %s", ctx.Err()),
+					err:        ctx.Err(),
+				}
+				return
+			default:
+			}
+
+			// 执行工具调用
+			resultStr := e.executeToolCall(toolCall)
+			results[index] = toolCallResult{
+				index:      index,
+				toolCallID: toolCall.ID,
+				resultStr:  resultStr,
+			}
+		}(i, tc)
+	}
+
+	wg.Wait()
+	return results
 }
 
 // LogLevel 日志级别
@@ -83,10 +176,11 @@ func NewClawEngine(client chatCompletionClient, model string) *ClawEngine {
 	}
 
 	return &ClawEngine{
-		client:      client,
-		model:       model,
-		messages:    []openai.ChatCompletionMessage{systemMessage},
-		debugLogger: newDebugLogger(),
+		client:         client,
+		model:          model,
+		messages:       []openai.ChatCompletionMessage{systemMessage},
+		debugLogger:    newDebugLogger(),
+		maxConcurrency: 5, // 默认最大并发工具调用数
 	}
 }
 
@@ -157,39 +251,15 @@ func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 			return msg.Content, nil
 		}
 
-		for _, toolCall := range msg.ToolCalls {
-			fmt.Printf("[tool-call] name=%s args=%s\n", toolCall.Function.Name, truncateForLog(toolCall.Function.Arguments, 400))
-
-			executor := tools.Executors[toolCall.Function.Name]
-			var resultStr string
-
-			if executor == nil {
-				resultStr = fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
-			} else {
-				result, err := executor(toolCall.Function.Arguments)
-				output, _ := result.(string)
-
-				if err != nil {
-					if output != "" {
-						resultStr = fmt.Sprintf("输出: %s\n错误: %s", output, err)
-					} else {
-						resultStr = fmt.Sprintf("错误: %s", err)
-					}
-				} else {
-					if output != "" {
-						resultStr = output
-					} else {
-						resultStr = fmt.Sprintf("%v", result)
-					}
-				}
-			}
-
-			fmt.Printf("[tool-result] name=%s result=%s\n", toolCall.Function.Name, truncateForLog(resultStr, 400))
+		// 并发执行工具调用
+		results := e.executeToolCallsConcurrently(ctx, msg.ToolCalls)
+		for _, result := range results {
+			fmt.Printf("[tool-call] index=%d id=%s result=%s\n", result.index, result.toolCallID, truncateForLog(result.resultStr, 400))
 
 			e.messages = append(e.messages, openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
-				Content:    resultStr,
-				ToolCallID: toolCall.ID,
+				Content:    result.resultStr,
+				ToolCallID: result.toolCallID,
 			})
 		}
 	}
@@ -214,7 +284,6 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 		if err != nil {
 			return "", fmt.Errorf("chat completion stream error: %w", err)
 		}
-		defer stream.Close()
 
 		var contentBuilder strings.Builder
 		var toolCalls []openai.ToolCall
@@ -223,6 +292,12 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 		for {
 			response, err := stream.Recv()
 			if err != nil {
+				// io.EOF 表示流正常结束，不是错误
+				if errors.Is(err, io.EOF) {
+					stream.Close()
+					break
+				}
+				stream.Close()
 				return "", fmt.Errorf("stream recv error: %w", err)
 			}
 
@@ -265,6 +340,7 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 
 			// 检查是否完成
 			if response.Choices[0].FinishReason != "" {
+				stream.Close()
 				break
 			}
 		}
@@ -304,40 +380,15 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 			return msg.Content, nil
 		}
 
-		// 执行工具调用
-		for _, toolCall := range msg.ToolCalls {
-			fmt.Printf("[tool-call] name=%s args=%s\n", toolCall.Function.Name, truncateForLog(toolCall.Function.Arguments, 400))
-
-			executor := tools.Executors[toolCall.Function.Name]
-			var resultStr string
-
-			if executor == nil {
-				resultStr = fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
-			} else {
-				result, err := executor(toolCall.Function.Arguments)
-				output, _ := result.(string)
-
-				if err != nil {
-					if output != "" {
-						resultStr = fmt.Sprintf("输出: %s\n错误: %s", output, err)
-					} else {
-						resultStr = fmt.Sprintf("错误: %s", err)
-					}
-				} else {
-					if output != "" {
-						resultStr = output
-					} else {
-						resultStr = fmt.Sprintf("%v", result)
-					}
-				}
-			}
-
-			fmt.Printf("[tool-result] name=%s result=%s\n", toolCall.Function.Name, truncateForLog(resultStr, 400))
+		// 并发执行工具调用
+		results := e.executeToolCallsConcurrently(ctx, msg.ToolCalls)
+		for _, result := range results {
+			fmt.Printf("[tool-call] index=%d id=%s result=%s\n", result.index, result.toolCallID, truncateForLog(result.resultStr, 400))
 
 			e.messages = append(e.messages, openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
-				Content:    resultStr,
-				ToolCallID: toolCall.ID,
+				Content:    result.resultStr,
+				ToolCallID: result.toolCallID,
 			})
 		}
 	}
