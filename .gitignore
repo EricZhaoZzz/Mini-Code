@@ -24,6 +24,10 @@ vendor/
 *.swp
 *.swo
 
+# Agent/本地工具生成目录
+.codex/
+.serena/
+
 # 系统文件
 .DS_Store
 Thumbs.db

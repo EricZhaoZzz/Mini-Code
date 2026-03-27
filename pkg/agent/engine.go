@@ -29,8 +29,8 @@ type LogLevel int
 
 const (
 	LogLevelMinimal LogLevel = iota // 最精简日志
-	LogLevelNormal                // 正常日志
-	LogLevelVerbose             // 详细日志
+	LogLevelNormal                  // 正常日志
+	LogLevelVerbose                 // 详细日志
 )
 
 var currentLogLevel = LogLevelNormal
