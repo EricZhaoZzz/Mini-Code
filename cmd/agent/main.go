@@ -121,10 +121,10 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 		clearScreen()
 		return true
 
-	case "reset", "r":
+	case "reset", "r", "new", "n":
 		fmt.Println("🔄 正在重置对话历史...")
 		engine.Reset()
-		fmt.Println("✅ 对话已重置。")
+		fmt.Println("✅ 对话已重置，会话上下文已清空。")
 		return true
 
 	case "history", "hist":
@@ -146,6 +146,7 @@ func printWelcome() {
 	fmt.Println("║  命令:                                                ║")
 	fmt.Println("║    help    - 显示帮助信息                             ║")
 	fmt.Println("║    clear   - 清除屏幕                                 ║")
+	fmt.Println("║    new     - 清空会话上下文                           ║")
 	fmt.Println("║    reset   - 重置对话历史                             ║")
 	fmt.Println("║    exit    - 退出程序                                 ║")
 	fmt.Println("║                                                       ║")
@@ -159,6 +160,7 @@ func printHelp() {
 	fmt.Println("📖 可用命令:")
 	fmt.Println("  help    - 显示帮助信息")
 	fmt.Println("  clear   - 清除屏幕")
+	fmt.Println("  new     - 清空会话上下文")
 	fmt.Println("  reset   - 重置对话历史")
 	fmt.Println("  exit    - 退出程序")
 	fmt.Println("")

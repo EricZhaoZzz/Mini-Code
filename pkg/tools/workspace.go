@@ -17,8 +17,6 @@ func workspaceRoot() (string, error) {
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err == nil {
 		root = resolvedRoot
-	} else {
-		return "", fmt.Errorf("解析工作区失败: %w", err)
 	}
 
 	return filepath.Clean(root), nil
@@ -88,13 +86,15 @@ func resolvePathWithExistingParents(path string) (string, error) {
 			return filepath.Clean(resolved), nil
 		}
 
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-
+		// 失败降级，使用原始路径继续
+		// 如果路径不存在或解析失败，都尝试向上查找已存在的父路径
 		parent := filepath.Dir(current)
 		if parent == current {
-			return "", err
+			// 已到达根路径，使用原始路径
+			for i := len(missingParts) - 1; i >= 0; i-- {
+				current = filepath.Join(current, missingParts[i])
+			}
+			return filepath.Clean(current), nil
 		}
 
 		missingParts = append(missingParts, filepath.Base(current))

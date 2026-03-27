@@ -13,11 +13,38 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+type chatCompletionClient interface {
+	CreateChatCompletion(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
+}
+
 type ClawEngine struct {
-	client      *openai.Client
+	client      chatCompletionClient
 	model       string
 	messages    []openai.ChatCompletionMessage
 	debugLogger *log.Logger
+}
+
+// LogLevel 日志级别
+type LogLevel int
+
+const (
+	LogLevelMinimal LogLevel = iota // 最精简日志
+	LogLevelNormal                // 正常日志
+	LogLevelVerbose             // 详细日志
+)
+
+var currentLogLevel = LogLevelNormal
+
+func init() {
+	// 通过环境变量设置日志级别
+	switch os.Getenv("LM_LOG_LEVEL") {
+	case "minimal", "0":
+		currentLogLevel = LogLevelMinimal
+	case "normal", "1":
+		currentLogLevel = LogLevelNormal
+	case "verbose", "2":
+		currentLogLevel = LogLevelVerbose
+	}
 }
 
 func newDebugLogger() *log.Logger {
@@ -43,7 +70,7 @@ func (e *ClawEngine) debugLog(tag string, v any) {
 	e.debugLogger.Printf("[%s] %s\n%s\n", time.Now().Format("15:04:05.000"), tag, data)
 }
 
-func NewClawEngine(client *openai.Client, model string) *ClawEngine {
+func NewClawEngine(client chatCompletionClient, model string) *ClawEngine {
 	systemMessage := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleSystem,
 		Content: buildSystemPrompt(),
@@ -72,8 +99,7 @@ func buildSystemPrompt() string {
 			"处理代码任务时，必须优先使用 list_files、search_in_files、read_file 理解项目，再进行修改。"+
 			"所有文件路径必须使用工作区内的相对路径，不能访问工作区外的文件。"+
 			"修改代码时，优先使用 replace_in_file 做最小修改，只有在必要时才使用 write_file 整体重写文件。"+
-			"修改后优先运行 run_shell 执行 go test ./... 做验证。"+
-			"如果测试失败，先读取错误信息并继续修复，直到通过或确认无法继续。",
+			"修改后优先运行 run_shell 执行 go test ./... 做验证。",
 		osName,
 		shellHint,
 	)
