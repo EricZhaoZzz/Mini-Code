@@ -1,10 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
+	"bufio"
 	"fmt"
 	"mini-claw/pkg/agent"
+	"mini-claw/pkg/ui"
 	_ "mini-claw/pkg/tools"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/ergochat/readline"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -20,19 +22,19 @@ func main() {
 
 	apiKey := os.Getenv("API_KEY")
 	if apiKey == "" {
-		fmt.Println("❌ 缺少环境变量 API_KEY")
+		ui.PrintError("缺少环境变量 API_KEY")
 		os.Exit(1)
 	}
 
 	baseURL := os.Getenv("BASE_URL")
 	if baseURL == "" {
-		fmt.Println("❌ 缺少环境变量 BASE_URL")
+		ui.PrintError("缺少环境变量 BASE_URL")
 		os.Exit(1)
 	}
 
 	modelID := os.Getenv("MODEL")
 	if modelID == "" {
-		fmt.Println("❌ 缺少环境变量 MODEL")
+		ui.PrintError("缺少环境变量 MODEL")
 		os.Exit(1)
 	}
 
@@ -49,23 +51,39 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT)
 	go func() {
 		<-sigChan
-		fmt.Println("\n\n👋 收到中断信号，正在退出...")
+		fmt.Println()
+		ui.PrintInfo("收到中断信号，正在退出...")
 		cancel()
 		os.Exit(0)
 	}()
 
 	printWelcome()
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("➜ ")
+	// 使用 readline 处理输入
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          ui.SprintColor(ui.User, "➜ ") + ui.SprintColor(ui.Bold, ""),
+		HistoryFile:     ".mini-claw-history",
+		HistoryLimit:    1000,
+		AutoComplete:    getCompleter(),
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+	})
+	if err != nil {
+		ui.PrintError("初始化输入失败: %v", err)
+		os.Exit(1)
+	}
+	defer rl.Close()
 
-		if !scanner.Scan() {
-			fmt.Println("\n\n👋 输入结束，程序退出。")
+	for {
+		line, err := rl.Readline()
+		if err != nil {
+			// 处理 EOF (Ctrl+D) 或错误
+			fmt.Println()
+			ui.PrintInfo("再见！感谢使用 Mini-Claw。")
 			break
 		}
 
-		input := strings.TrimSpace(scanner.Text())
+		input := strings.TrimSpace(line)
 		if input == "" {
 			continue
 		}
@@ -77,16 +95,21 @@ func main() {
 
 		// 检查上下文是否已取消
 		if ctx.Err() != nil {
-			fmt.Println("\n\n👋 程序已退出。")
+			ui.PrintInfo("程序已退出。")
 			break
 		}
 
 		engine.AddUserMessage(input)
 
-		fmt.Print("\n🤖 Mini-Claw: ")
-		_, err := engine.RunTurnStream(ctx, func(content string, done bool) error {
+		// 显示助手标签
+		ui.PrintAssistantLabel()
+
+		// 创建流式输出处理器
+		streaming := ui.NewStreamingText()
+
+		_, err = engine.RunTurnStream(ctx, func(content string, done bool) error {
 			if !done && content != "" {
-				fmt.Print(content)
+				streaming.Write(content)
 			}
 			return nil
 		})
@@ -94,16 +117,33 @@ func main() {
 			if ctx.Err() != nil {
 				break
 			}
-			fmt.Printf("\n❌ 运行失败: %v\n\n", err)
+			fmt.Println()
+			ui.PrintError("运行失败: %v", err)
 			continue
 		}
 
-		fmt.Printf("\n\n")
+		streaming.Complete()
+		fmt.Println()
 	}
+}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("⚠️ 读取输入失败: %v\n", err)
-	}
+// getCompleter 获取自动补全器
+func getCompleter() *readline.PrefixCompleter {
+	return readline.NewPrefixCompleter(
+		readline.PcItem("help"),
+		readline.PcItem("h"),
+		readline.PcItem("?"),
+		readline.PcItem("exit"),
+		readline.PcItem("quit"),
+		readline.PcItem("q"),
+		readline.PcItem("clear"),
+		readline.PcItem("cls"),
+		readline.PcItem("reset"),
+		readline.PcItem("r"),
+		readline.PcItem("new"),
+		readline.PcItem("n"),
+		readline.PcItem("history"),
+	)
 }
 
 // handleBuiltinCommand 处理内置命令，返回 true 表示已处理（不需要继续执行）
@@ -112,12 +152,12 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 
 	switch cmd {
 	case "exit", "quit", "q":
-		fmt.Println("\n👋 再见！感谢使用 Mini-Claw。")
+		ui.PrintSuccess("再见！感谢使用 Mini-Claw。")
 		os.Exit(0)
 		return true
 
 	case "help", "h", "?":
-		printHelp()
+		fmt.Println(ui.HelpPanel())
 		return true
 
 	case "clear", "cls":
@@ -125,14 +165,18 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 		return true
 
 	case "reset", "r", "new", "n":
-		fmt.Println("🔄 正在重置对话历史...")
+		ui.PrintInfo("正在重置对话历史...")
 		engine.Reset()
-		fmt.Println("✅ 对话已重置，会话上下文已清空。")
+		ui.PrintSuccess("对话已重置，会话上下文已清空。")
 		return true
 
 	case "history", "hist":
-		// 可以后续添加查看历史功能
-		fmt.Println("📜 对话历史功能开发中...")
+		count := engine.GetMessageCount()
+		ui.PrintInfo("对话消息数: %d", count)
+		return true
+
+	case "version", "v":
+		ui.PrintInfo("Mini-Claw v1.0")
 		return true
 	}
 
@@ -140,40 +184,16 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 }
 
 func printWelcome() {
-	fmt.Println("")
-	fmt.Println("╔═══════════════════════════════════════════════════════╗")
-	fmt.Println("║                    Mini-Claw v1.0                      ║")
-	fmt.Println("╠═══════════════════════════════════════════════════════╣")
-	fmt.Println("║  🤖 AI 编程助手已启动                                  ║")
-	fmt.Println("║                                                       ║")
-	fmt.Println("║  命令:                                                ║")
-	fmt.Println("║    help    - 显示帮助信息                             ║")
-	fmt.Println("║    clear   - 清除屏幕                                 ║")
-	fmt.Println("║    new     - 清空会话上下文                           ║")
-	fmt.Println("║    reset   - 重置对话历史                             ║")
-	fmt.Println("║    exit    - 退出程序                                 ║")
-	fmt.Println("║                                                       ║")
-	fmt.Println("║  输入你的任务开始对话...                               ║")
-	fmt.Println("╚═══════════════════════════════════════════════════════╝")
-	fmt.Println("")
-}
-
-func printHelp() {
-	fmt.Println("")
-	fmt.Println("📖 可用命令:")
-	fmt.Println("  help    - 显示帮助信息")
-	fmt.Println("  clear   - 清除屏幕")
-	fmt.Println("  new     - 清空会话上下文")
-	fmt.Println("  reset   - 重置对话历史")
-	fmt.Println("  exit    - 退出程序")
-	fmt.Println("")
-	fmt.Println("💡 提示: 直接输入你的任务描述，AI 会帮助你完成。")
-	fmt.Println("")
+	fmt.Println(ui.WelcomeBanner())
+	fmt.Println()
+	ui.PrintDim("命令: help 显示帮助 | exit 退出程序")
+	ui.PrintDim("提示: 直接输入你的任务开始对话...")
+	fmt.Println()
 }
 
 func clearScreen() {
 	fmt.Print("\033[2J\033[H")
-	fmt.Println("屏幕已清除。")
+	ui.PrintSuccess("屏幕已清除。")
 }
 
 func loadDotEnv(path string) {

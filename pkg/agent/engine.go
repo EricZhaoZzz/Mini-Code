@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"mini-claw/pkg/tools"
+	"mini-claw/pkg/ui"
 	"os"
 	"runtime"
 	"strings"
@@ -31,15 +32,18 @@ type ClawEngine struct {
 	model          string
 	messages       []openai.ChatCompletionMessage
 	debugLogger    *log.Logger
-	maxConcurrency int // 最大并发工具调用数
+	maxConcurrency int  // 最大并发工具调用数
+	verbose        bool
+	maxTurns       int  // 最大轮次限制，0 表示无限制
 }
 
 // toolCallResult 工具调用结果
 type toolCallResult struct {
-	index     int   // 原始顺序索引
+	index      int   // 原始顺序索引
 	toolCallID string
-	resultStr string
-	err       error
+	toolName   string
+	resultStr  string
+	err        error
 }
 
 // executeToolCall 执行单个工具调用
@@ -73,7 +77,7 @@ func (e *ClawEngine) executeToolCall(toolCall openai.ToolCall) (resultStr string
 // executeToolCallsConcurrently 并发执行工具调用，结果按原始顺序返回
 func (e *ClawEngine) executeToolCallsConcurrently(ctx context.Context, toolCalls []openai.ToolCall) []toolCallResult {
 	results := make([]toolCallResult, len(toolCalls))
-	
+
 	// 确定并发数
 	maxConcurrency := e.maxConcurrency
 	if maxConcurrency <= 0 {
@@ -91,7 +95,7 @@ func (e *ClawEngine) executeToolCallsConcurrently(ctx context.Context, toolCalls
 		wg.Add(1)
 		go func(index int, toolCall openai.ToolCall) {
 			defer wg.Done()
-			
+
 			// 获取信号量
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -102,6 +106,7 @@ func (e *ClawEngine) executeToolCallsConcurrently(ctx context.Context, toolCalls
 				results[index] = toolCallResult{
 					index:      index,
 					toolCallID: toolCall.ID,
+					toolName:   toolCall.Function.Name,
 					resultStr:  fmt.Sprintf("错误: 操作已取消 - %s", ctx.Err()),
 					err:        ctx.Err(),
 				}
@@ -114,6 +119,7 @@ func (e *ClawEngine) executeToolCallsConcurrently(ctx context.Context, toolCalls
 			results[index] = toolCallResult{
 				index:      index,
 				toolCallID: toolCall.ID,
+				toolName:   toolCall.Function.Name,
 				resultStr:  resultStr,
 			}
 		}(i, tc)
@@ -169,10 +175,24 @@ func (e *ClawEngine) debugLog(tag string, v any) {
 	e.debugLogger.Printf("[%s] %s\n%s\n", time.Now().Format("15:04:05.000"), tag, data)
 }
 
+// 默认最大轮次限制
+const DefaultMaxTurns = 50
+
 func NewClawEngine(client chatCompletionClient, model string) *ClawEngine {
 	systemMessage := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleSystem,
 		Content: buildSystemPrompt(),
+	}
+
+	verbose := os.Getenv("LM_VERBOSE") != "" || currentLogLevel >= LogLevelVerbose
+
+	// 可通过环境变量 LM_MAX_TURNS 设置最大轮次
+	maxTurns := DefaultMaxTurns
+	if envMaxTurns := os.Getenv("LM_MAX_TURNS"); envMaxTurns != "" {
+		var val int
+		if _, err := fmt.Sscanf(envMaxTurns, "%d", &val); err == nil && val >= 0 {
+			maxTurns = val
+		}
 	}
 
 	return &ClawEngine{
@@ -181,6 +201,8 @@ func NewClawEngine(client chatCompletionClient, model string) *ClawEngine {
 		messages:       []openai.ChatCompletionMessage{systemMessage},
 		debugLogger:    newDebugLogger(),
 		maxConcurrency: 5, // 默认最大并发工具调用数
+		verbose:        verbose,
+		maxTurns:       maxTurns,
 	}
 }
 
@@ -226,9 +248,41 @@ func (e *ClawEngine) GetMessageCount() int {
 	return len(e.messages)
 }
 
+// SetVerbose 设置详细模式
+func (e *ClawEngine) SetVerbose(verbose bool) {
+	e.verbose = verbose
+}
+
+// SetMaxTurns 设置最大轮次限制，0 表示无限制
+func (e *ClawEngine) SetMaxTurns(maxTurns int) {
+	e.maxTurns = maxTurns
+}
+
+// GetMaxTurns 获取当前最大轮次限制
+func (e *ClawEngine) GetMaxTurns() int {
+	return e.maxTurns
+}
+
+// printVerbose 详细模式下打印信息
+func (e *ClawEngine) printVerbose(format string, args ...interface{}) {
+	if e.verbose {
+		ui.PrintDim(format, args...)
+	}
+}
+
 func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
-	for i := 0; i < 10; i++ {
-		fmt.Printf("[turn] step=%d message_count=%d\n", i+1, len(e.messages))
+	for i := 0; ; i++ {
+		// 检查轮次限制
+		if e.maxTurns > 0 && i >= e.maxTurns {
+			return "", fmt.Errorf("达到最大工具调用轮数 (%d)，任务中止。可通过设置环境变量 LM_MAX_TURNS 调整限制", e.maxTurns)
+		}
+
+		// 在接近限制时显示警告
+		if e.maxTurns > 0 && i >= e.maxTurns-5 && i < e.maxTurns {
+			e.printVerbose("[警告] 剩余轮次: %d", e.maxTurns-i)
+		}
+
+		e.printVerbose("[turn] step=%d message_count=%d", i+1, len(e.messages))
 
 		req := openai.ChatCompletionRequest{
 			Model:    e.model,
@@ -244,18 +298,21 @@ func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 		e.debugLog("LM OUTPUT", resp)
 
 		msg := resp.Choices[0].Message
-		fmt.Printf("[assistant] content=%q tool_calls=%d\n", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
+		e.printVerbose("[assistant] content=%q tool_calls=%d", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
 		e.messages = append(e.messages, msg)
 
 		if len(msg.ToolCalls) == 0 {
 			return msg.Content, nil
 		}
 
+		// 显示工具调用摘要
+		e.displayToolCallsStart(msg.ToolCalls)
+
 		// 并发执行工具调用
 		results := e.executeToolCallsConcurrently(ctx, msg.ToolCalls)
-		for _, result := range results {
-			fmt.Printf("[tool-call] index=%d id=%s result=%s\n", result.index, result.toolCallID, truncateForLog(result.resultStr, 400))
+		e.displayToolCallsResults(results)
 
+		for _, result := range results {
 			e.messages = append(e.messages, openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
 				Content:    result.resultStr,
@@ -263,15 +320,23 @@ func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 			})
 		}
 	}
-
-	return "", fmt.Errorf("达到最大工具调用轮数，任务中止")
 }
 
 // RunTurnStream 流式执行一轮对话，支持流式输出
 // handler 用于处理流式内容块，当工具调用发生时会先完成流式输出，执行工具后再返回
 func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandler) (string, error) {
-	for i := 0; i < 10; i++ {
-		fmt.Printf("[turn-stream] step=%d message_count=%d\n", i+1, len(e.messages))
+	for i := 0; ; i++ {
+		// 检查轮次限制
+		if e.maxTurns > 0 && i >= e.maxTurns {
+			return "", fmt.Errorf("达到最大工具调用轮数 (%d)，任务中止。可通过设置环境变量 LM_MAX_TURNS 调整限制", e.maxTurns)
+		}
+
+		// 在接近限制时显示警告
+		if e.maxTurns > 0 && i >= e.maxTurns-5 && i < e.maxTurns {
+			ui.PrintWarning("[警告] 剩余轮次: %d", e.maxTurns-i)
+		}
+
+		e.printVerbose("[turn-stream] step=%d message_count=%d", i+1, len(e.messages))
 
 		req := openai.ChatCompletionRequest{
 			Model:    e.model,
@@ -373,18 +438,25 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 			msg.ToolCalls = toolCalls
 		}
 
-		fmt.Printf("[assistant-stream] content=%q tool_calls=%d\n", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
+		e.printVerbose("[assistant-stream] content=%q tool_calls=%d", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
 		e.messages = append(e.messages, msg)
 
 		if len(toolCalls) == 0 {
 			return msg.Content, nil
 		}
 
+		// 显示工具调用摘要
+		fmt.Println()
+		e.displayToolCallsStart(msg.ToolCalls)
+
 		// 并发执行工具调用
 		results := e.executeToolCallsConcurrently(ctx, msg.ToolCalls)
-		for _, result := range results {
-			fmt.Printf("[tool-call] index=%d id=%s result=%s\n", result.index, result.toolCallID, truncateForLog(result.resultStr, 400))
+		e.displayToolCallsResults(results)
 
+		// 继续对话前显示提示
+		ui.PrintDim("  等待响应...")
+
+		for _, result := range results {
 			e.messages = append(e.messages, openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
 				Content:    result.resultStr,
@@ -392,8 +464,67 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 			})
 		}
 	}
+}
 
-	return "", fmt.Errorf("达到最大工具调用轮数，任务中止")
+// displayToolCallsStart 显示工具调用开始
+func (e *ClawEngine) displayToolCallsStart(toolCalls []openai.ToolCall) {
+	ui.PrintHeader("工具调用")
+	for i, tc := range toolCalls {
+		name := tc.Function.Name
+		displayName, ok := ui.ToolNames[name]
+		if !ok {
+			displayName = name
+		}
+		icon := ui.ToolIcons[name]
+		if icon == "" {
+			icon = ui.IconTool
+		}
+
+		// 解析参数以获取更友好的显示
+		var args map[string]interface{}
+		json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+		var argsSummary string
+		if path, ok := args["path"].(string); ok {
+			argsSummary = path
+		} else if query, ok := args["query"].(string); ok {
+			argsSummary = truncateForLog(query, 30)
+		} else if cmd, ok := args["command"].(string); ok {
+			argsSummary = truncateForLog(cmd, 30)
+		}
+
+		if argsSummary != "" {
+			ui.PrintDim("  %d. %s %s %s", i+1, icon, ui.SprintColor(ui.Bold, displayName), ui.SprintColor(ui.Dim, argsSummary))
+		} else {
+			ui.PrintDim("  %d. %s %s", i+1, icon, ui.SprintColor(ui.Bold, displayName))
+		}
+	}
+}
+
+// displayToolCallsResults 显示工具调用结果
+func (e *ClawEngine) displayToolCallsResults(results []toolCallResult) {
+	// 清除"等待响应..."提示
+	ui.ClearLine()
+	ui.MoveUp(1)
+	ui.ClearLine()
+
+	success := 0
+	failed := 0
+	for _, result := range results {
+		if result.err != nil {
+			failed++
+			ui.PrintToolResult(false, result.err.Error())
+		} else {
+			success++
+			ui.PrintToolResult(true, result.resultStr)
+		}
+	}
+
+	// 显示摘要
+	ui.PrintDim("  完成: %d 成功", success)
+	if failed > 0 {
+		ui.PrintError("  %d 失败", failed)
+	}
 }
 
 func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
@@ -412,10 +543,10 @@ func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
 func (e *ClawEngine) RunStream(ctx context.Context, prompt string, handler StreamChunkHandler) error {
 	e.AddUserMessage(prompt)
 
-	fmt.Printf("\nMini-Claw: ")
+	ui.PrintAssistantLabel()
 	reply, err := e.RunTurnStream(ctx, handler)
 	if err != nil {
-		fmt.Printf("\n错误: %v\n\n", err)
+		ui.PrintError("错误: %v", err)
 		return err
 	}
 
@@ -428,9 +559,11 @@ func (e *ClawEngine) RunStream(ctx context.Context, prompt string, handler Strea
 }
 
 func truncateForLog(s string, limit int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.TrimSpace(s)
 	if len(s) <= limit {
 		return s
 	}
 
-	return s[:limit] + "...(truncated)"
+	return s[:limit] + "..."
 }
