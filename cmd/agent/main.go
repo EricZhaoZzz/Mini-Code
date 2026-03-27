@@ -5,8 +5,9 @@ import (
 	"bufio"
 	"fmt"
 	"mini-code/pkg/agent"
+	"mini-code/pkg/memory"
+	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
-	_ "mini-code/pkg/tools"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -43,8 +44,33 @@ func main() {
 
 	client := openai.NewClientWithConfig(config)
 	engine := agent.NewClawEngine(client, modelID)
+
+	// 初始化 Memory Store
+	homeDir, _ := os.UserHomeDir()
+	globalDBPath := filepath.Join(homeDir, ".mini-code", "memory.db")
+	projectDBPath := filepath.Join(".", ".mini-code", "project.db")
+
+	// 确保目录存在
+	os.MkdirAll(filepath.Dir(globalDBPath), 0o755)
+	os.MkdirAll(filepath.Dir(projectDBPath), 0o755)
+
+	memStore, err := memory.Open(globalDBPath, projectDBPath)
+	if err != nil {
+		ui.PrintError("Memory 初始化失败: %v", err)
+		// 非致命错误，继续运行（无记忆模式）
+		memStore = nil
+	}
+	if memStore != nil {
+		defer memStore.Close()
+		tools.SetMemoryStore(memStore) // 注入工具层
+		engine.SetMemoryStore(memStore)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// 设置全局 Esc 监控器的取消函数
+	ui.GlobalEscMonitor.SetCancelFunc(cancel)
 
 	// 监听 Ctrl+C 信号
 	sigChan := make(chan os.Signal, 1)
@@ -101,22 +127,41 @@ func main() {
 
 		engine.AddUserMessage(input)
 
+		// 创建任务上下文（每个任务独立）
+		taskCtx, taskCancel := context.WithCancel(context.Background())
+		
+		// 设置 Esc 监控器的取消函数
+		ui.GlobalEscMonitor.SetCancelFunc(taskCancel)
+
 		// 显示助手标签
 		ui.PrintAssistantLabel()
 
 		// 创建流式输出处理器
 		streaming := ui.NewStreamingText()
 
-		_, err = engine.RunTurnStream(ctx, func(content string, done bool) error {
+		// 启动 Esc 监控
+		ui.GlobalEscMonitor.Start()
+
+		_, err = engine.RunTurnStream(taskCtx, func(content string, done bool) error {
 			if !done && content != "" {
 				streaming.Write(content)
 			}
 			return nil
 		})
+
+		// 停止 Esc 监控
+		ui.GlobalEscMonitor.Stop()
+
+		// 检查是否被用户中止
+		if err != nil && taskCtx.Err() != nil {
+			taskCancel()
+			fmt.Println()
+			ui.PrintInfo("任务已中止。输入新问题继续对话...")
+			continue
+		}
+		taskCancel()
+
 		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
 			fmt.Println()
 			ui.PrintError("运行失败: %v", err)
 			continue

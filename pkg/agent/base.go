@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"mini-code/pkg/memory"
 	"mini-code/pkg/provider"
 	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
@@ -25,6 +26,7 @@ type BaseAgent struct {
 	systemPromptOverride string // Phase 3: specialized agent system prompt
 	agentName            string // Phase 3: agent name
 	legacyMessages       []openai.ChatCompletionMessage // 兼容旧 ClawEngine 接口，管理内部消息历史
+	memStore             *memory.Store // Phase 2: 记忆存储
 }
 
 func NewBaseAgent(p provider.Provider, model string, allowedTools []string) *BaseAgent {

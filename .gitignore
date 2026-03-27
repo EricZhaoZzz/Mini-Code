@@ -27,8 +27,10 @@ vendor/
 # Agent/本地工具生成目录
 .codex/
 .serena/
+.mini-code/
 
 # 系统文件
 .DS_Store
 Thumbs.db
-.mini-code-history.superpowers/
+.mini-code-history
+superpowers/

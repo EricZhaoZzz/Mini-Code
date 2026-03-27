@@ -6,6 +6,8 @@ import (
 	"mini-code/pkg/provider"
 	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
+	"mini-code/pkg/memory"
+	"os"
 	"runtime"
 
 	"github.com/sashabaranov/go-openai"
@@ -49,8 +51,27 @@ func NewClawEngine(client chatCompletionClient, model string) *ClawEngine {
 	return e
 }
 
+// SetMemoryStore 设置记忆存储（需要在创建后调用）
+func (e *ClawEngine) SetMemoryStore(store *memory.Store) {
+	e.memStore = store
+	// 重新构建带记忆的系统提示
+	e.refreshSystemPrompt()
+}
+
+// refreshSystemPrompt 刷新系统提示（在记忆变化后调用）
+func (e *ClawEngine) refreshSystemPrompt() {
+	if len(e.legacyMessages) > 0 && e.legacyMessages[0].Role == openai.ChatMessageRoleSystem {
+		e.legacyMessages[0].Content = buildSystemPromptWithMemory(e.memStore)
+	}
+}
+
 // buildSystemPrompt 构建系统提示（保留供兼容）
 func buildSystemPrompt() string {
+	return buildSystemPromptWithMemory(nil)
+}
+
+// buildSystemPromptWithMemory 构建带记忆的系统提示
+func buildSystemPromptWithMemory(memStore *memory.Store) string {
 	osName := runtime.GOOS
 	var shellHint string
 	switch osName {
@@ -60,7 +81,7 @@ func buildSystemPrompt() string {
 		shellHint = "如果必须执行 shell 命令，请使用 Unix shell 语法。"
 	}
 
-	return fmt.Sprintf(`你是一个专业的中文 AI 编程助手 Mini-Code。你的核心职责是帮助用户完成各类软件开发任务。
+	basePrompt := fmt.Sprintf(`你是一个专业的中文 AI 编程助手 Mini-Code。你的核心职责是帮助用户完成各类软件开发任务。
 
 ## 运行环境
 - 操作系统: %s
@@ -117,6 +138,17 @@ func buildSystemPrompt() string {
 2. 说明你正在执行的操作和原因
 3. 如果遇到问题，清晰地描述问题并提供解决建议
 4. 完成任务后简要总结所做的修改`, osName, shellHint)
+
+	// 注入记忆后缀
+	if memStore != nil {
+		workspace, _ := os.Getwd()
+		suffix := memStore.BuildPromptSuffix(workspace)
+		if suffix != "" {
+			basePrompt += suffix
+		}
+	}
+
+	return basePrompt
 }
 
 // AddUserMessage 向内部历史追加用户消息（兼容旧接口）
@@ -130,7 +162,7 @@ func (e *ClawEngine) AddUserMessage(message string) {
 // Reset 重置对话历史，保留系统消息（兼容旧接口）
 func (e *ClawEngine) Reset() {
 	e.legacyMessages = []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: buildSystemPrompt()},
+		{Role: openai.ChatMessageRoleSystem, Content: buildSystemPromptWithMemory(e.memStore)},
 	}
 }
 
@@ -268,6 +300,19 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 
 		switch finishReason {
 		case openai.FinishReasonStop, "":
+			// 任务完成后异步更新 Session Memory（不阻塞响应）
+			if e.memStore != nil && reply != "" {
+				go func() {
+					workspace, _ := os.Getwd()
+					// 取响应前 200 字作为摘要
+					summary := reply
+					if len([]rune(summary)) > 200 {
+						runes := []rune(summary)
+						summary = string(runes[:200])
+					}
+					_ = e.memStore.SaveSessionMemory(workspace, summary, 72)
+				}()
+			}
 			return msg.Content, nil
 		case openai.FinishReasonLength:
 			return msg.Content, fmt.Errorf("响应因达到 token 上限而被截断")

@@ -15,6 +15,8 @@ require (
 	github.com/google/renameio/v2 v2.0.2
 	github.com/invopop/jsonschema v0.13.0
 	github.com/sashabaranov/go-openai v1.41.2
+	golang.org/x/term v0.38.0
+	modernc.org/sqlite v1.47.0
 )
 
 require (
@@ -55,5 +57,4 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.47.0 // indirect
 )
