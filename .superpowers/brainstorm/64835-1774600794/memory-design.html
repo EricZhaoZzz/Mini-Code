@@ -1,0 +1,106 @@
+<h2>Memory 层详细设计</h2>
+<p class="subtitle">SQLite Schema + 三类记忆的读写逻辑</p>
+
+<style>
+.schema-block { background: rgba(0,0,0,0.25); border-radius: 8px; padding: 1rem 1.2rem; margin: 0.8rem 0; font-family: monospace; font-size: 0.78rem; line-height: 1.7; overflow-x: auto; }
+.schema-comment { color: #6ee7b7; }
+.schema-key { color: #93c5fd; }
+.schema-type { color: #fde68a; }
+.mem-card { border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
+.mem-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.mem-card .detail { font-size: 0.82rem; opacity: 0.88; line-height: 1.6; }
+.mem-card .ops { display: flex; gap: 0.5rem; margin-top: 0.7rem; flex-wrap: wrap; }
+.op-tag { padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.72rem; font-weight: 600; }
+.read-tag { background: rgba(16,185,129,0.2); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.3); }
+.write-tag { background: rgba(245,158,11,0.2); color: #fde68a; border: 1px solid rgba(245,158,11,0.3); }
+.auto-tag { background: rgba(99,102,241,0.2); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
+.section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; margin: 1.2rem 0 0.5rem; }
+.highlight-box { margin-top: 1.2rem; padding: 0.9rem 1.1rem; border-radius: 8px; background: rgba(99,102,241,0.1); border-left: 3px solid #6366f1; font-size: 0.85rem; line-height: 1.7; }
+</style>
+
+<p class="section-title">📁 存储位置</p>
+<div class="schema-block">
+<span class="schema-comment">// 全局数据库（用户偏好、对话摘要）</span>
+~/.mini-code/memory.db
+
+<span class="schema-comment">// 项目级数据库（每个工作区一个）</span>
+&lt;workspace&gt;/.mini-code/project.db
+</div>
+
+<p class="section-title">🗄️ SQLite Schema</p>
+<div class="schema-block">
+<span class="schema-comment">-- 项目记忆表（project.db）</span>
+CREATE TABLE project_memory (
+  <span class="schema-key">id</span>          <span class="schema-type">INTEGER PRIMARY KEY</span>,
+  <span class="schema-key">key</span>         <span class="schema-type">TEXT UNIQUE</span>,   <span class="schema-comment">-- "tech_stack","code_style","important_paths"</span>
+  <span class="schema-key">value</span>       <span class="schema-type">TEXT</span>,
+  <span class="schema-key">updated_at</span>  <span class="schema-type">DATETIME</span>
+);
+
+<span class="schema-comment">-- 用户偏好表（memory.db）</span>
+CREATE TABLE user_preference (
+  <span class="schema-key">id</span>          <span class="schema-type">INTEGER PRIMARY KEY</span>,
+  <span class="schema-key">key</span>         <span class="schema-type">TEXT UNIQUE</span>,   <span class="schema-comment">-- "language","verbosity","code_style"</span>
+  <span class="schema-key">value</span>       <span class="schema-type">TEXT</span>,
+  <span class="schema-key">updated_at</span>  <span class="schema-type">DATETIME</span>
+);
+
+<span class="schema-comment">-- 对话摘要表（memory.db）</span>
+CREATE TABLE conversation_summary (
+  <span class="schema-key">id</span>          <span class="schema-type">INTEGER PRIMARY KEY</span>,
+  <span class="schema-key">workspace</span>  <span class="schema-type">TEXT</span>,          <span class="schema-comment">-- 关联到哪个项目</span>
+  <span class="schema-key">summary</span>    <span class="schema-type">TEXT</span>,          <span class="schema-comment">-- 压缩后的摘要内容</span>
+  <span class="schema-key">msg_count</span>  <span class="schema-type">INTEGER</span>,       <span class="schema-comment">-- 压缩自多少条消息</span>
+  <span class="schema-key">created_at</span> <span class="schema-type">DATETIME</span>
+);
+</div>
+
+<p class="section-title">🧠 三类记忆详细说明</p>
+
+<div class="mem-card" style="background:rgba(6,95,70,0.15);border:1px solid rgba(16,185,129,0.2);">
+  <h3>① 项目记忆（ProjectMemory）</h3>
+  <div class="detail">
+    存什么：技术栈（Go/React）、编码风格（tab缩进/驼峰命名）、关键路径（main入口、配置文件位置）、重要决策（"不要用X库"）<br>
+    何时读：每次会话开始，注入 system prompt 的"项目背景"部分<br>
+    何时写：Agent 完成任务后，LLM 判断是否有新的项目信息值得记录（异步调用轻量LLM提取）
+  </div>
+  <div class="ops">
+    <span class="op-tag read-tag">READ: 会话开始时</span>
+    <span class="op-tag write-tag">WRITE: 任务完成后异步</span>
+    <span class="op-tag auto-tag">LLM 自动提取</span>
+  </div>
+</div>
+
+<div class="mem-card" style="background:rgba(124,58,237,0.15);border:1px solid rgba(167,139,250,0.2);">
+  <h3>② 用户偏好（UserPreference）</h3>
+  <div class="detail">
+    存什么：回复语言（中文）、详细程度（简洁/详细）、代码风格偏好、常用操作习惯<br>
+    何时读：每次会话开始，注入 system prompt 的"用户偏好"部分<br>
+    何时写：检测到用户明确指令（"以后用中文"、"不要加注释"）时立即写入；也可手动 /remember 命令
+  </div>
+  <div class="ops">
+    <span class="op-tag read-tag">READ: 会话开始时</span>
+    <span class="op-tag write-tag">WRITE: 检测到偏好变化时</span>
+    <span class="op-tag auto-tag">支持 /remember 命令</span>
+  </div>
+</div>
+
+<div class="mem-card" style="background:rgba(146,64,14,0.15);border:1px solid rgba(251,191,36,0.2);">
+  <h3>③ 对话摘要（ConversationSummary）</h3>
+  <div class="detail">
+    存什么：历史对话的压缩摘要（"上周完成了认证模块重构，决定使用JWT"）<br>
+    何时读：新会话开始时，加载最近 N 条摘要注入上下文<br>
+    何时写：消息历史超过阈值（默认 40 条）时，自动将最早的 20 条压缩为摘要写入DB，然后从内存中移除
+  </div>
+  <div class="ops">
+    <span class="op-tag read-tag">READ: 新会话开始时</span>
+    <span class="op-tag write-tag">WRITE: 消息数超过阈值时</span>
+    <span class="op-tag auto-tag">自动压缩，无感知</span>
+  </div>
+</div>
+
+<div class="highlight-box">
+  <strong>依赖：</strong> 使用 <code>modernc.org/sqlite</code>（纯 Go 实现，无 CGO，跨平台零额外依赖）<br>
+  <strong>并发安全：</strong> 每个 DB 连接单独管理，使用 <code>database/sql</code> 连接池，写操作加互斥锁<br>
+  <strong>迁移：</strong> 应用启动时自动执行 <code>CREATE TABLE IF NOT EXISTS</code>，无需独立迁移工具
+</div>

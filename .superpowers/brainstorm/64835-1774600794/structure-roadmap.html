@@ -1,0 +1,133 @@
+<h2>目录结构 + 实现路线图</h2>
+<p class="subtitle">完整包结构 · 分阶段交付计划 · 改动影响评估</p>
+
+<style>
+.section-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.55; margin: 1.4rem 0 0.5rem; }
+.code-block { background: rgba(0,0,0,0.28); border-radius: 8px; padding: 1rem 1.2rem; margin: 0.6rem 0; font-family: monospace; font-size: 0.76rem; line-height: 1.8; }
+.new { color: #fbbf24; font-weight: 700; }
+.extend { color: #60a5fa; font-weight: 700; }
+.keep { color: #34d399; }
+.cm { color: #6b7280; }
+.phase { border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 0.8rem; }
+.phase h3 { margin: 0 0 0.5rem; font-size: 0.95rem; display: flex; align-items: center; gap: 0.5rem; }
+.phase-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 800; flex-shrink: 0; }
+.task-list { list-style: none; padding: 0; margin: 0; }
+.task-list li { font-size: 0.81rem; padding: 0.2rem 0; opacity: 0.88; display: flex; align-items: flex-start; gap: 0.4rem; line-height: 1.5; }
+.task-list li::before { content: "→"; opacity: 0.5; flex-shrink: 0; }
+.impact-row { display: flex; gap: 0.8rem; margin: 0.5rem 0; align-items: center; font-size: 0.8rem; }
+.impact-file { font-family: monospace; font-size: 0.76rem; flex: 1; }
+.impact-badge { padding: 0.15rem 0.55rem; border-radius: 4px; font-size: 0.68rem; font-weight: 700; flex-shrink: 0; }
+.b-new { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b44; }
+.b-mod { background: #3b82f622; color: #60a5fa; border: 1px solid #3b82f644; }
+.b-keep { background: #10b98122; color: #34d399; border: 1px solid #10b98144; }
+.highlight-box { margin-top: 1.2rem; padding: 0.9rem 1.1rem; border-radius: 8px; background: rgba(99,102,241,0.1); border-left: 3px solid #6366f1; font-size: 0.83rem; line-height: 1.8; }
+.legend { display: flex; gap: 1.2rem; font-size: 0.75rem; margin-bottom: 0.5rem; }
+.legend span { display: flex; align-items: center; gap: 0.3rem; }
+</style>
+
+<p class="section-title">📁 完整目录结构（演进后）</p>
+
+<div class="legend">
+  <span><span class="new">■</span> NEW 全新</span>
+  <span><span class="extend">■</span> EXTEND 扩展</span>
+  <span><span class="keep">■</span> KEEP 不变</span>
+</div>
+
+<div class="code-block">
+mini-code/
+├── cmd/agent/
+│   ├── <span class="extend">main.go</span>            <span class="cm">← 启动 CLI Channel + Orchestrator</span>
+│   └── <span class="keep">main_test.go</span>
+│
+├── pkg/
+│   ├── <span class="new">channel/</span>            <span class="cm">← 新增：统一 Channel 接口</span>
+│   │   ├── <span class="new">types.go</span>        <span class="cm">← Channel 接口 + Message 类型定义</span>
+│   │   ├── <span class="new">cli/runner.go</span>   <span class="cm">← CLI readline → Channel 适配</span>
+│   │   └── <span class="new">telegram/bot.go</span> <span class="cm">← Telegram Bot 长轮询实现</span>
+│   │
+│   ├── <span class="new">orchestrator/</span>       <span class="cm">← 新增：会话路由 + Agent 调度</span>
+│   │   ├── <span class="new">orchestrator.go</span> <span class="cm">← 主调度器</span>
+│   │   ├── <span class="new">session.go</span>      <span class="cm">← Session 管理（per channel+user）</span>
+│   │   └── <span class="new">router.go</span>       <span class="cm">← 意图识别 → Agent 路由</span>
+│   │
+│   ├── agent/
+│   │   ├── <span class="extend">base.go</span>         <span class="cm">← engine.go 重构为 BaseAgent（实现 Agent 接口）</span>
+│   │   ├── <span class="new">agent.go</span>        <span class="cm">← Agent 接口定义</span>
+│   │   ├── <span class="new">coder.go</span>        <span class="cm">← CoderAgent（全部工具）</span>
+│   │   ├── <span class="new">reviewer.go</span>     <span class="cm">← ReviewerAgent（只读工具）</span>
+│   │   ├── <span class="new">researcher.go</span>   <span class="cm">← ResearcherAgent（搜索工具）</span>
+│   │   └── <span class="keep">engine_test.go</span>
+│   │
+│   ├── <span class="new">memory/</span>             <span class="cm">← 新增：SQLite 三层记忆</span>
+│   │   ├── <span class="new">store.go</span>        <span class="cm">← DB 初始化 + 连接管理</span>
+│   │   ├── <span class="new">session.go</span>      <span class="cm">← Session Memory（72h TTL）</span>
+│   │   ├── <span class="new">longterm.go</span>     <span class="cm">← Long-term Fact Store</span>
+│   │   └── <span class="new">prompt.go</span>       <span class="cm">← 记忆 → system prompt 注入格式化</span>
+│   │
+│   ├── provider/
+│   │   ├── <span class="new">interface.go</span>    <span class="cm">← Provider 接口定义</span>
+│   │   └── <span class="new">openai.go</span>       <span class="cm">← OpenAI 兼容实现（从 engine.go 提取）</span>
+│   │
+│   ├── tools/
+│   │   ├── <span class="keep">registry.go</span>     <span class="cm">← 新增注册 remember/forget/recall/dispatch_agent</span>
+│   │   ├── <span class="new">memory_tools.go</span> <span class="cm">← remember/forget/recall 实现</span>
+│   │   ├── <span class="new">dispatch.go</span>     <span class="cm">← dispatch_agent 实现</span>
+│   │   └── <span class="keep">...（其余13个工具不变）</span>
+│   │
+│   └── <span class="keep">ui/（完全不变）</span>
+│
+├── <span class="keep">.env.example</span>
+└── <span class="new">.env.example</span> <span class="cm">← 新增 TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_USERS</span>
+</div>
+
+<p class="section-title">🗓 分阶段实现路线图</p>
+
+<div class="phase" style="background:rgba(6,95,70,0.15);border:1px solid rgba(16,185,129,0.2);">
+  <h3><span class="phase-num" style="background:#065f46;color:#6ee7b7;">1</span> Phase 1 · 基础重构（无新功能，保持现有能力）</h3>
+  <ul class="task-list">
+    <li>提取 <code>Provider</code> 接口，将 engine.go 中的 OpenAI 调用迁移到 <code>pkg/provider/openai.go</code></li>
+    <li>将 ClawEngine 重构为 <code>BaseAgent</code>，实现 <code>Agent</code> 接口</li>
+    <li>将 CLI readline 逻辑提取为 <code>CLIChannel</code>，实现 <code>Channel</code> 接口</li>
+    <li>引入 <code>Orchestrator</code> 骨架，串联 CLIChannel → Orchestrator → CoderAgent</li>
+    <li>全部现有测试通过，用户无感知变化</li>
+  </ul>
+</div>
+
+<div class="phase" style="background:rgba(146,64,14,0.15);border:1px solid rgba(251,191,36,0.2);">
+  <h3><span class="phase-num" style="background:#92400e;color:#fde68a;">2</span> Phase 2 · Memory 层</h3>
+  <ul class="task-list">
+    <li>实现 <code>pkg/memory/store.go</code>，自动建表（IF NOT EXISTS）</li>
+    <li>实现 Session Memory（72h TTL）+ Long-term Fact Store + FTS5 索引</li>
+    <li>实现 <code>pkg/memory/prompt.go</code>：记忆 → system prompt 注入</li>
+    <li>注册 <code>remember</code> / <code>forget</code> / <code>recall</code> 三个工具</li>
+    <li>Orchestrator 在每次会话开始时注入记忆、结束后异步更新 Session Memory</li>
+  </ul>
+</div>
+
+<div class="phase" style="background:rgba(30,58,95,0.2);border:1px solid rgba(59,130,246,0.2);">
+  <h3><span class="phase-num" style="background:#1e3a5f;color:#93c5fd;">3</span> Phase 3 · 多 Agent 专化</h3>
+  <ul class="task-list">
+    <li>实现 <code>ReviewerAgent</code> 和 <code>ResearcherAgent</code>（不同 system prompt + 工具子集）</li>
+    <li>实现 <code>router.go</code> 意图路由（关键词匹配优先，兜底 CoderAgent）</li>
+    <li>注册 <code>dispatch_agent</code> 工具，支持 CoderAgent 调起子 Agent</li>
+  </ul>
+</div>
+
+<div class="phase" style="background:rgba(124,58,237,0.15);border:1px solid rgba(167,139,250,0.2);">
+  <h3><span class="phase-num" style="background:#7c3aed;color:#e9d5ff;">4</span> Phase 4 · Telegram Channel</h3>
+  <ul class="task-list">
+    <li>实现 <code>pkg/channel/telegram/bot.go</code>，Long Polling + 白名单鉴权</li>
+    <li>实现附件下载（图片/文档 → 本地临时文件）</li>
+    <li>实现流式刷新（edit_message 每 1.5s）+ 任务完成新消息通知</li>
+    <li>实现 /reset /memory /status /cancel 命令</li>
+    <li>main.go 支持 <code>--channel telegram</code> 启动参数</li>
+  </ul>
+</div>
+
+<div class="highlight-box">
+  <strong>改动影响总结：</strong><br>
+  🟢 完全不动：<code>pkg/tools/</code>（13个工具）、<code>pkg/ui/</code>、现有测试<br>
+  🔵 小幅扩展：<code>pkg/tools/registry.go</code>（+4行注册）、<code>cmd/agent/main.go</code>（替换为 Channel 启动）<br>
+  🟡 重构：<code>pkg/agent/engine.go</code> → <code>pkg/agent/base.go</code>（逻辑保留，接口包装）<br>
+  🟡 新增：<code>pkg/channel/</code>、<code>pkg/orchestrator/</code>、<code>pkg/memory/</code>（~1500行新代码）
+</div>

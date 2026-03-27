@@ -1,0 +1,99 @@
+<h2>Memory 层设计 v2（对齐 OpenClaw）</h2>
+<p class="subtitle">新增 remember / forget 工具 + 3层记忆模型</p>
+
+<style>
+.schema-block { background: rgba(0,0,0,0.25); border-radius: 8px; padding: 1rem 1.2rem; margin: 0.8rem 0; font-family: monospace; font-size: 0.78rem; line-height: 1.7; overflow-x: auto; }
+.schema-comment { color: #6ee7b7; }
+.schema-key { color: #93c5fd; }
+.schema-type { color: #fde68a; }
+.schema-string { color: #fca5a5; }
+.mem-layer { border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 0.8rem; }
+.mem-layer h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+.mem-layer p { margin: 0; font-size: 0.82rem; opacity: 0.88; line-height: 1.6; }
+.tool-card { background: rgba(0,0,0,0.2); border-radius: 8px; padding: 0.9rem 1rem; margin: 0.5rem 0; }
+.tool-card h4 { margin: 0 0 0.3rem; font-size: 0.88rem; font-family: monospace; color: #fde68a; }
+.tool-card p { margin: 0; font-size: 0.8rem; opacity: 0.85; line-height: 1.5; }
+.section-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.55; margin: 1.2rem 0 0.4rem; }
+.flow-row { display: flex; gap: 0.5rem; align-items: center; font-size: 0.82rem; margin: 0.3rem 0; }
+.badge { padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.7rem; font-weight: 700; }
+.badge-new { background: #f59e0b; color: #000; }
+.badge-keep { background: #10b981; color: #fff; }
+.highlight-box { margin-top: 1.2rem; padding: 0.9rem 1.1rem; border-radius: 8px; background: rgba(99,102,241,0.1); border-left: 3px solid #6366f1; font-size: 0.84rem; line-height: 1.7; }
+</style>
+
+<p class="section-title">🏗 三层记忆模型（对齐 OpenClaw）</p>
+
+<div class="mem-layer" style="background:rgba(30,58,95,0.2);border:1px solid rgba(59,130,246,0.25);">
+  <h3>Layer 1 · Working Memory（当前对话）</h3>
+  <p>消息历史 <code>[]ChatMessage</code>，存在 ClawEngine.messages 中，会话结束后清空。<strong>现有实现，不变。</strong></p>
+</div>
+
+<div class="mem-layer" style="background:rgba(124,58,237,0.15);border:1px solid rgba(167,139,250,0.25);">
+  <h3>Layer 2 · Session Memory（72h 短期）<span class="badge badge-new" style="margin-left:0.5rem;vertical-align:middle;">NEW</span></h3>
+  <p>任务完成后自动提取本次对话要点，写入 SQLite，72小时 TTL 自动过期。下次会话时加载近期 Session 摘要注入 system prompt。对应 OpenClaw 的 session_memory 表。</p>
+</div>
+
+<div class="mem-layer" style="background:rgba(6,95,70,0.2);border:1px solid rgba(16,185,129,0.25);">
+  <h3>Layer 3 · Long-term Memory（持久 Fact Store）<span class="badge badge-new" style="margin-left:0.5rem;vertical-align:middle;">NEW</span></h3>
+  <p>Agent 通过 <code>remember()</code> 工具主动写入的事实。按 scope 分三类：<code>project</code>（当前工作区）、<code>user</code>（全局偏好）、<code>global</code>（跨项目通用知识）。永不自动过期，只能 <code>forget()</code> 删除。</p>
+</div>
+
+<p class="section-title">🔧 新增工具（注册到 pkg/tools/registry.go）</p>
+
+<div class="tool-card">
+  <h4>remember(content, scope, tags?)</h4>
+  <p><strong>content</strong>：要记住的事实，自然语言描述<br>
+  <strong>scope</strong>：<code>"project"</code> | <code>"user"</code> | <code>"global"</code><br>
+  <strong>tags</strong>：可选标签，便于后续检索（如 <code>["architecture","decision"]</code>）<br>
+  示例：<em>"记住：这个项目使用 pnpm 而不是 npm，因为 monorepo 结构需要 workspace 支持"</em></p>
+</div>
+
+<div class="tool-card">
+  <h4>forget(memory_id)</h4>
+  <p><strong>memory_id</strong>：要删除的记忆 ID（由 remember 返回）<br>
+  用于纠正错误记忆或删除过时信息</p>
+</div>
+
+<div class="tool-card">
+  <h4>recall(query, scope?)</h4>
+  <p><strong>query</strong>：自然语言检索词<br>
+  <strong>scope</strong>：可选，限定检索范围（不填则全局搜索）<br>
+  SQLite FTS5 全文检索，返回相关记忆列表。Agent 在不确定时可主动查询。</p>
+</div>
+
+<p class="section-title">🗄 SQLite Schema（最终版）</p>
+
+<div class="schema-block">
+<span class="schema-comment">-- 短期记忆（72h TTL，memory.db）</span>
+CREATE TABLE session_memory (
+  id          INTEGER PRIMARY KEY,
+  workspace   TEXT,
+  content     TEXT,
+  created_at  DATETIME,
+  expires_at  DATETIME    <span class="schema-comment">-- created_at + 72h</span>
+);
+
+<span class="schema-comment">-- 长期记忆 Fact Store（memory.db）</span>
+CREATE TABLE long_term_memory (
+  id          INTEGER PRIMARY KEY,
+  scope       TEXT,       <span class="schema-comment">-- "project" | "user" | "global"</span>
+  workspace   TEXT,       <span class="schema-comment">-- scope=project 时关联工作区路径</span>
+  content     TEXT,       <span class="schema-comment">-- 自然语言事实</span>
+  tags        TEXT,       <span class="schema-comment">-- JSON 数组</span>
+  created_at  DATETIME
+);
+
+<span class="schema-comment">-- FTS5 全文检索索引</span>
+CREATE VIRTUAL TABLE memory_fts USING fts5(
+  content, tags, content=long_term_memory
+);
+</div>
+
+<div class="highlight-box">
+  <strong>与 OpenClaw 的对齐程度：</strong><br>
+  ✅ Working Memory（当前对话上下文）<br>
+  ✅ Session Memory（72h 短期，自动提取）<br>
+  ✅ Long-term Fact Store（LLM 主动 remember/forget/recall）<br>
+  ✅ Scope 分级（project / user / global）<br>
+  ⚡ 简化：OpenClaw 用向量相似度检索，我们用 SQLite FTS5 全文检索（零额外依赖）
+</div>
