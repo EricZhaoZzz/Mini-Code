@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"mini-claw/pkg/tools"
+	"mini-code/pkg/tools"
 
 	"github.com/sashabaranov/go-openai"
 )

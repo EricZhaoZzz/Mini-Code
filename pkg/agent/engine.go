@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mini-claw/pkg/tools"
-	"mini-claw/pkg/ui"
+	"mini-code/pkg/tools"
+	"mini-code/pkg/ui"
 	"os"
 	"runtime"
 	"strings"
@@ -217,7 +217,7 @@ func buildSystemPrompt() string {
 	}
 
 	return fmt.Sprintf(
-		"你是一个中文 AI 编程助手 Mini-Claw。当前运行环境是 %s。%s "+
+		"你是一个中文 AI 编程助手 Mini-Code。当前运行环境是 %s。%s "+
 			"处理代码任务时，必须优先使用 list_files、search_in_files、read_file 理解项目，再进行修改。"+
 			"所有文件路径必须使用工作区内的相对路径，不能访问工作区外的文件。"+
 			"修改代码时，优先使用 replace_in_file 做最小修改，只有在必要时才使用 write_file 整体重写文件。"+
@@ -535,7 +535,7 @@ func (e *ClawEngine) Run(ctx context.Context, prompt string) error {
 		return err
 	}
 
-	fmt.Printf("\nMini-Claw: %s\n\n", reply)
+	fmt.Printf("\nMini-Code: %s\n\n", reply)
 	return nil
 }
 

@@ -1,4 +1,4 @@
-module mini-claw
+module mini-code
 
 go 1.26.1
 

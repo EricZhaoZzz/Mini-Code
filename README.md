@@ -1,4 +1,4 @@
-# mini-claw
+# mini-code
 
 一个本地运行的中文 AI 编程助手（CLI）。
 

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`mini-claw` 是一个本地运行的中文 AI 编程助手（CLI），采用 Go 语言开发。
+`mini-code` 是一个本地运行的中文 AI 编程助手（CLI），采用 Go 语言开发。
 
 ### 目录结构
 ```

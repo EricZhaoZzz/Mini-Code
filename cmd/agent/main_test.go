@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"mini-claw/pkg/agent"
+	"mini-code/pkg/agent"
 	"os"
 	"strings"
 	"testing"

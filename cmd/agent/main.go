@@ -4,9 +4,9 @@ import (
 	"context"
 	"bufio"
 	"fmt"
-	"mini-claw/pkg/agent"
-	"mini-claw/pkg/ui"
-	_ "mini-claw/pkg/tools"
+	"mini-code/pkg/agent"
+	"mini-code/pkg/ui"
+	_ "mini-code/pkg/tools"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -62,7 +62,7 @@ func main() {
 	// 使用 readline 处理输入
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          ui.SprintColor(ui.User, "➜ ") + ui.SprintColor(ui.Bold, ""),
-		HistoryFile:     ".mini-claw-history",
+		HistoryFile:     ".mini-code-history",
 		HistoryLimit:    1000,
 		AutoComplete:    getCompleter(),
 		InterruptPrompt: "^C",
