@@ -39,6 +39,9 @@ func init() {
 	register("remember", "记住一个事实到长期记忆（project/user/global 三种范围）", RememberArguments{}, Remember)
 	register("forget", "删除一条长期记忆（通过 remember 返回的 ID）", ForgetArguments{}, Forget)
 	register("recall", "从长期记忆中检索相关信息", RecallArguments{}, Recall)
+
+	// Agent 调度工具
+	register("dispatch_agent", "调用专化子 Agent 执行子任务（reviewer 或 researcher）", DispatchAgentArguments{}, DispatchAgent)
 }
 
 func register(name, description string, args interface{}, executor ToolExecutor) {

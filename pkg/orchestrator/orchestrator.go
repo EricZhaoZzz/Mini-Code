@@ -18,6 +18,7 @@ type Orchestrator struct {
 	sessions map[string]*Session
 	mu        sync.Mutex
 	memStore  *memory.Store
+	router    *Router
 }
 
 // New 创建新的 Orchestrator
@@ -25,6 +26,7 @@ func New(memStore *memory.Store) *Orchestrator {
 	o := &Orchestrator{
 		sessions: make(map[string]*Session),
 		memStore: memStore,
+		router:   NewRouter(),
 	}
 	go o.evictLoop() // 后台清理不活跃 Session
 	return o
@@ -43,9 +45,20 @@ func (o *Orchestrator) GetOrCreateSession(channelID, userID string) *Session {
 	return s
 }
 
+// AgentFactory 根据类型创建 Agent
+type AgentFactory func(agentType string) agent.Agent
+
 // Handle 处理一条到来的消息
-func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, agnt agent.Agent, ch channel.Channel) error {
+func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, factory AgentFactory, ch channel.Channel) error {
 	session := o.GetOrCreateSession(msg.ChannelID, msg.UserID)
+
+	// 路由到合适的 Agent 类型
+	agentType := o.router.Route(msg.Text)
+	session.mu.Lock()
+	session.agentType = agentType
+	session.mu.Unlock()
+
+	agnt := factory(agentType)
 
 	// 追加用户消息到 Session
 	session.AppendUserMessage(msg.Text)

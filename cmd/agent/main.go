@@ -73,7 +73,29 @@ func main() {
 
 	cliCh := cli.New(rl)
 	orch := orchestrator.New(memStore)
-	baseAgent := agent.NewBaseAgent(p, modelID, nil)
+
+	// 创建 Agent 工厂函数
+	factory := func(agentType string) agent.Agent {
+		switch agentType {
+		case "reviewer":
+			return agent.NewReviewerAgent(p, modelID)
+		case "researcher":
+			return agent.NewResearcherAgent(p, modelID)
+		default:
+			return agent.NewCoderAgent(p, modelID)
+		}
+	}
+
+	// 注入 dispatch_agent 工厂的工厂函数
+	tools.SetDispatchFactory(func(role string, task string) (string, error) {
+		subAgent := factory(role)
+		messages := []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: "你是专业的 AI 助手。"},
+			{Role: openai.ChatMessageRoleUser, Content: task},
+		}
+		reply, _, err := subAgent.Run(context.Background(), messages, nil)
+		return reply, err
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -121,7 +143,7 @@ func main() {
 			// 启动 Esc 监控
 			ui.GlobalEscMonitor.Start()
 
-			if err := orch.Handle(taskCtx, msg, baseAgent, cliCh); err != nil {
+			if err := orch.Handle(taskCtx, msg, factory, cliCh); err != nil {
 				ui.PrintError("运行失败: %v", err)
 			}
 			fmt.Println()
