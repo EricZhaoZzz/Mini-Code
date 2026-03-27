@@ -162,9 +162,9 @@ func PrintPrompt() {
 // PrintAssistantLabel 打印助手标签
 func PrintAssistantLabel() {
 	if colorEnabled {
-		fmt.Print(Assistant.Sprint("🤖 Mini-Claw: "))
+		fmt.Print(Assistant.Sprint("🤖 Mini-Code: "))
 	} else {
-		fmt.Print("Mini-Claw: ")
+		fmt.Print("Mini-Code: ")
 	}
 }
 

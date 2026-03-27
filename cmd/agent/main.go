@@ -79,7 +79,7 @@ func main() {
 		if err != nil {
 			// 处理 EOF (Ctrl+D) 或错误
 			fmt.Println()
-			ui.PrintInfo("再见！感谢使用 Mini-Claw。")
+			ui.PrintInfo("再见！感谢使用 Mini-Code。")
 			break
 		}
 
@@ -152,7 +152,7 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 
 	switch cmd {
 	case "exit", "quit", "q":
-		ui.PrintSuccess("再见！感谢使用 Mini-Claw。")
+		ui.PrintSuccess("再见！感谢使用 Mini-Code。")
 		os.Exit(0)
 		return true
 
@@ -176,7 +176,7 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 		return true
 
 	case "version", "v":
-		ui.PrintInfo("Mini-Claw v1.0")
+		ui.PrintInfo("Mini-Code v1.0")
 		return true
 	}
 
