@@ -1,11 +1,14 @@
 package main
 
 import (
-	"context"
 	"bufio"
+	"context"
 	"fmt"
 	"mini-code/pkg/agent"
+	"mini-code/pkg/channel/cli"
 	"mini-code/pkg/memory"
+	"mini-code/pkg/orchestrator"
+	"mini-code/pkg/provider"
 	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
 	"os"
@@ -22,28 +25,16 @@ func main() {
 	loadDotEnv(".env")
 
 	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		ui.PrintError("缺少环境变量 API_KEY")
-		os.Exit(1)
-	}
-
 	baseURL := os.Getenv("BASE_URL")
-	if baseURL == "" {
-		ui.PrintError("缺少环境变量 BASE_URL")
-		os.Exit(1)
-	}
-
 	modelID := os.Getenv("MODEL")
-	if modelID == "" {
-		ui.PrintError("缺少环境变量 MODEL")
+	if apiKey == "" || baseURL == "" || modelID == "" {
+		ui.PrintError("缺少必要环境变量 API_KEY / BASE_URL / MODEL")
 		os.Exit(1)
 	}
 
-	config := openai.DefaultConfig(apiKey)
-	config.BaseURL = baseURL
-
-	client := openai.NewClientWithConfig(config)
-	engine := agent.NewClawEngine(client, modelID)
+	cfg := openai.DefaultConfig(apiKey)
+	cfg.BaseURL = baseURL
+	p := provider.NewOpenAIProvider(cfg, modelID)
 
 	// 初始化 Memory Store
 	homeDir, _ := os.UserHomeDir()
@@ -63,8 +54,26 @@ func main() {
 	if memStore != nil {
 		defer memStore.Close()
 		tools.SetMemoryStore(memStore) // 注入工具层
-		engine.SetMemoryStore(memStore)
 	}
+
+	// 创建 readline 实例
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          ui.SprintColor(ui.User, "➜ ") + ui.SprintColor(ui.Bold, ""),
+		HistoryFile:     ".mini-code-history",
+		HistoryLimit:    1000,
+		AutoComplete:    getCompleter(),
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+	})
+	if err != nil {
+		ui.PrintError("初始化输入失败: %v", err)
+		os.Exit(1)
+	}
+	defer rl.Close()
+
+	cliCh := cli.New(rl)
+	orch := orchestrator.New(memStore)
+	baseAgent := agent.NewBaseAgent(p, modelID, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -85,90 +94,42 @@ func main() {
 
 	printWelcome()
 
-	// 使用 readline 处理输入
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt:          ui.SprintColor(ui.User, "➜ ") + ui.SprintColor(ui.Bold, ""),
-		HistoryFile:     ".mini-code-history",
-		HistoryLimit:    1000,
-		AutoComplete:    getCompleter(),
-		InterruptPrompt: "^C",
-		EOFPrompt:       "exit",
-	})
-	if err != nil {
-		ui.PrintError("初始化输入失败: %v", err)
-		os.Exit(1)
-	}
-	defer rl.Close()
+	// 在 goroutine 中启动 CLI 监听
+	go cliCh.Start(ctx)
 
 	for {
-		line, err := rl.Readline()
-		if err != nil {
-			// 处理 EOF (Ctrl+D) 或错误
-			fmt.Println()
-			ui.PrintInfo("再见！感谢使用 Mini-Code。")
-			break
-		}
-
-		input := strings.TrimSpace(line)
-		if input == "" {
-			continue
-		}
-
-		// 处理内置命令
-		if handleBuiltinCommand(input, engine) {
-			continue
-		}
-
-		// 检查上下文是否已取消
-		if ctx.Err() != nil {
-			ui.PrintInfo("程序已退出。")
-			break
-		}
-
-		engine.AddUserMessage(input)
-
-		// 创建任务上下文（每个任务独立）
-		taskCtx, taskCancel := context.WithCancel(context.Background())
-		
-		// 设置 Esc 监控器的取消函数
-		ui.GlobalEscMonitor.SetCancelFunc(taskCancel)
-
-		// 显示助手标签
-		ui.PrintAssistantLabel()
-
-		// 创建流式输出处理器
-		streaming := ui.NewStreamingText()
-
-		// 启动 Esc 监控
-		ui.GlobalEscMonitor.Start()
-
-		_, err = engine.RunTurnStream(taskCtx, func(content string, done bool) error {
-			if !done && content != "" {
-				streaming.Write(content)
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-cliCh.Messages():
+			if !ok {
+				ui.PrintInfo("再见！感谢使用 Mini-Code。")
+				return
 			}
-			return nil
-		})
 
-		// 停止 Esc 监控
-		ui.GlobalEscMonitor.Stop()
+			// 处理内置命令
+			if handleBuiltinCommand(msg.Text, orch, cliCh.ChannelID(), "local") {
+				continue
+			}
 
-		// 检查是否被用户中止
-		if err != nil && taskCtx.Err() != nil {
+			// 创建任务上下文
+			taskCtx, taskCancel := context.WithCancel(ctx)
+			
+			// 设置 Esc 监控器的取消函数
+			ui.GlobalEscMonitor.SetCancelFunc(taskCancel)
+
+			// 启动 Esc 监控
+			ui.GlobalEscMonitor.Start()
+
+			if err := orch.Handle(taskCtx, msg, baseAgent, cliCh); err != nil {
+				ui.PrintError("运行失败: %v", err)
+			}
+			fmt.Println()
+
+			// 停止 Esc 监控
+			ui.GlobalEscMonitor.Stop()
 			taskCancel()
-			fmt.Println()
-			ui.PrintInfo("任务已中止。输入新问题继续对话...")
-			continue
 		}
-		taskCancel()
-
-		if err != nil {
-			fmt.Println()
-			ui.PrintError("运行失败: %v", err)
-			continue
-		}
-
-		streaming.Complete()
-		fmt.Println()
 	}
 }
 
@@ -191,8 +152,8 @@ func getCompleter() *readline.PrefixCompleter {
 	)
 }
 
-// handleBuiltinCommand 处理内置命令，返回 true 表示已处理（不需要继续执行）
-func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
+// handleBuiltinCommand 处理内置命令，返回 true 表示已处理
+func handleBuiltinCommand(input string, orch *orchestrator.Orchestrator, channelID, userID string) bool {
 	cmd := strings.ToLower(input)
 
 	switch cmd {
@@ -211,12 +172,16 @@ func handleBuiltinCommand(input string, engine *agent.ClawEngine) bool {
 
 	case "reset", "r", "new", "n":
 		ui.PrintInfo("正在重置对话历史...")
-		engine.Reset()
+		session := orch.GetOrCreateSession(channelID, userID)
+		session.Reset()
+		// 重新注入记忆
+		orch.RefreshSessionPrompt(channelID, userID)
 		ui.PrintSuccess("对话已重置，会话上下文已清空。")
 		return true
 
 	case "history", "hist":
-		count := engine.GetMessageCount()
+		session := orch.GetOrCreateSession(channelID, userID)
+		count := session.MessageCount()
 		ui.PrintInfo("对话消息数: %d", count)
 		return true
 

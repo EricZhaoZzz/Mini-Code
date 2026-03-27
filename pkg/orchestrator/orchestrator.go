@@ -1,0 +1,205 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"mini-code/pkg/agent"
+	"mini-code/pkg/channel"
+	"mini-code/pkg/memory"
+	"mini-code/pkg/ui"
+	"os"
+	"runtime"
+	"sync"
+	"time"
+)
+
+// Orchestrator 管理 Session，路由消息到 Agent
+type Orchestrator struct {
+	sessions map[string]*Session
+	mu        sync.Mutex
+	memStore  *memory.Store
+}
+
+// New 创建新的 Orchestrator
+func New(memStore *memory.Store) *Orchestrator {
+	o := &Orchestrator{
+		sessions: make(map[string]*Session),
+		memStore: memStore,
+	}
+	go o.evictLoop() // 后台清理不活跃 Session
+	return o
+}
+
+// GetOrCreateSession 获取或创建 Session
+func (o *Orchestrator) GetOrCreateSession(channelID, userID string) *Session {
+	key := channelID + ":" + userID
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if s, ok := o.sessions[key]; ok {
+		return s
+	}
+	s := newSession(channelID, userID, o.buildSystemPrompt())
+	o.sessions[key] = s
+	return s
+}
+
+// Handle 处理一条到来的消息
+func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, agnt agent.Agent, ch channel.Channel) error {
+	session := o.GetOrCreateSession(msg.ChannelID, msg.UserID)
+
+	// 追加用户消息到 Session
+	session.AppendUserMessage(msg.Text)
+
+	// 创建可取消 context，存入 Session 供 /cancel 使用
+	runCtx, cancel := context.WithCancel(ctx)
+	session.SetCancel(cancel)
+	defer cancel()
+
+	// 创建流式输出处理器
+	ui.PrintAssistantLabel()
+	streaming := ui.NewStreamingText()
+
+	handler := agent.StreamChunkHandler(func(content string, done bool) error {
+		if !done && content != "" {
+			streaming.Write(content)
+		}
+		return nil
+	})
+
+	// 执行 Agent
+	reply, newMsgs, err := agnt.Run(runCtx, session.Messages(), handler)
+	streaming.Complete()
+
+	// 将新消息追加到 Session（无论是否出错，保留已完成的工具调用）
+	if len(newMsgs) > 0 {
+		session.AppendMessages(newMsgs)
+	}
+
+	if err != nil {
+		if runCtx.Err() != nil {
+			ch.NotifyDone(msg.ChannelID, "任务已取消")
+			return nil
+		}
+		return err
+	}
+	_ = reply // 已通过 streaming 输出
+	return nil
+}
+
+// evictLoop 每小时清理超过 24h 不活跃的 Session
+func (o *Orchestrator) evictLoop() {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		o.mu.Lock()
+		for key, s := range o.sessions {
+			if time.Since(s.lastSeen) > 24*time.Hour {
+				delete(o.sessions, key)
+			}
+		}
+		o.mu.Unlock()
+	}
+}
+
+// buildSystemPrompt 构建系统提示
+func (o *Orchestrator) buildSystemPrompt() string {
+	return o.buildSystemPromptWithMemory()
+}
+
+// buildSystemPromptWithMemory 构建带记忆的系统提示
+func (o *Orchestrator) buildSystemPromptWithMemory() string {
+	osName := runtime.GOOS
+	var shellHint string
+	switch osName {
+	case "windows":
+		shellHint = "如果必须执行 shell 命令，请使用 Windows CMD 语法。"
+	default:
+		shellHint = "如果必须执行 shell 命令，请使用 Unix shell 语法。"
+	}
+
+	basePrompt := fmt.Sprintf(`你是一个专业的中文 AI 编程助手 Mini-Code。你的核心职责是帮助用户完成各类软件开发任务。
+
+## 运行环境
+- 操作系统: %s
+- %s
+
+## 核心工作流程
+
+### 1. 理解项目（必须首先执行）
+在开始任何代码修改之前，你必须先理解项目结构：
+- 使用 list_files 浏览目录结构，了解项目组织方式
+- 使用 search_in_files 搜索关键代码，定位相关模块
+- 使用 read_file 阅读关键文件，理解现有实现
+
+### 2. 分析需求
+- 仔细理解用户的任务目标
+- 识别需要修改的文件和范围
+- 考虑对现有代码的影响
+
+### 3. 执行修改
+- 优先使用 replace_in_file 进行最小化修改，保持代码的一致性和可追溯性
+- 只有在创建新文件或文件需要大规模重写时才使用 write_file
+- 保持代码风格与项目现有风格一致
+
+### 4. 验证结果
+- 修改完成后，运行 go test ./... 验证代码正确性
+- 如果测试失败，分析错误并修复
+
+## 工具使用规范
+
+### 文件操作
+- 所有文件路径必须是工作区内的相对路径，禁止访问工作区外的文件
+- 使用 replace_in_file 时，old 参数必须与文件中的原始文本完全匹配
+- 写入文件时保持合理的缩进和格式
+
+### Shell 命令
+- 仅在必要时使用 shell 命令
+- 命令应该简洁明确，避免复杂的管道操作
+- 注意处理命令的输出和错误
+
+### 搜索操作
+- 使用 search_in_files 时，query 应该精确匹配目标文本
+- 可以通过 path 参数限定搜索范围，提高效率
+
+## 代码质量要求
+
+1. **保持一致性**: 新代码应与现有代码风格保持一致
+2. **最小修改原则**: 只修改必要的部分，避免不必要的重构
+3. **错误处理**: 适当处理边界情况和错误
+4. **代码注释**: 在复杂逻辑处添加必要的注释
+
+## 沟通规范
+
+1. 用中文回复用户
+2. 说明你正在执行的操作和原因
+3. 如果遇到问题，清晰地描述问题并提供解决建议
+4. 完成任务后简要总结所做的修改`, osName, shellHint)
+
+	// 注入记忆后缀
+	if o.memStore != nil {
+		workspace, _ := os.Getwd()
+		suffix := o.memStore.BuildPromptSuffix(workspace)
+		if suffix != "" {
+			basePrompt += suffix
+		}
+	}
+
+	return basePrompt
+}
+
+// GetMemoryStore 获取记忆存储
+func (o *Orchestrator) GetMemoryStore() *memory.Store {
+	return o.memStore
+}
+
+// RefreshSessionPrompt 刷新会话的系统提示（在记忆变化后调用）
+func (o *Orchestrator) RefreshSessionPrompt(channelID, userID string) {
+	o.mu.Lock()
+	key := channelID + ":" + userID
+	s, ok := o.sessions[key]
+	o.mu.Unlock()
+
+	if ok {
+		s.UpdateSystemPrompt(o.buildSystemPrompt())
+	}
+}

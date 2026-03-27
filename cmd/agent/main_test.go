@@ -2,41 +2,12 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"mini-code/pkg/agent"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/sashabaranov/go-openai"
+	"mini-code/pkg/orchestrator"
 )
-
-// mockChatCompletionClient 用于测试的 mock client
-type mockChatCompletionClient struct{}
-
-// CreateChatCompletion 实现 chatCompletionClient 接口
-func (m *mockChatCompletionClient) CreateChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
-	return openai.ChatCompletionResponse{
-		Choices: []openai.ChatCompletionChoice{
-			{
-				Message: openai.ChatCompletionMessage{
-					Content: "test response",
-				},
-			},
-		},
-	}, nil
-}
-
-// CreateChatCompletionStream 实现 chatCompletionClient 接口
-func (m *mockChatCompletionClient) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
-	return nil, nil
-}
-
-// newTestEngine 创建测试用的 engine
-func newTestEngine() *agent.ClawEngine {
-	mockClient := &mockChatCompletionClient{}
-	return agent.NewClawEngine(mockClient, "test-model")
-}
 
 // captureOutput 捕获 stdout 输出
 func captureOutput(f func()) string {
@@ -56,7 +27,7 @@ func captureOutput(f func()) string {
 
 // TestHandleBuiltinCommand_Help 测试 help 命令
 func TestHandleBuiltinCommand_Help(t *testing.T) {
-	engine := newTestEngine()
+	orch := orchestrator.New(nil)
 
 	tests := []struct {
 		name  string
@@ -72,10 +43,10 @@ func TestHandleBuiltinCommand_Help(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			output := captureOutput(func() {
-				handleBuiltinCommand(tt.input, engine)
+				handleBuiltinCommand(tt.input, orch, "cli", "test")
 			})
 
-			// 验证输出包含帮助信息（新格式）
+			// 验证输出包含帮助信息
 			if !strings.Contains(output, "命令列表") {
 				t.Errorf("help 命令输出应包含 '命令列表', got: %s", output)
 			}
@@ -88,7 +59,7 @@ func TestHandleBuiltinCommand_Help(t *testing.T) {
 
 // TestHandleBuiltinCommand_Clear 测试 clear 命令
 func TestHandleBuiltinCommand_Clear(t *testing.T) {
-	engine := newTestEngine()
+	orch := orchestrator.New(nil)
 
 	tests := []struct {
 		name  string
@@ -103,7 +74,7 @@ func TestHandleBuiltinCommand_Clear(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			output := captureOutput(func() {
-				handleBuiltinCommand(tt.input, engine)
+				handleBuiltinCommand(tt.input, orch, "cli", "test")
 			})
 
 			// clear 命令应该输出屏幕已清除
@@ -116,12 +87,12 @@ func TestHandleBuiltinCommand_Clear(t *testing.T) {
 
 // TestHandleBuiltinCommand_Reset 测试 reset 命令
 func TestHandleBuiltinCommand_Reset(t *testing.T) {
-	engine := newTestEngine()
-
-	// 先添加一些消息
-	engine.AddUserMessage("test message 1")
-	engine.AddUserMessage("test message 2")
-	initialCount := engine.GetMessageCount()
+	orch := orchestrator.New(nil)
+	
+	// 先添加一些消息到 session
+	session := orch.GetOrCreateSession("cli", "test")
+	session.AppendUserMessage("test message 1")
+	session.AppendUserMessage("test message 2")
 
 	tests := []struct {
 		name  string
@@ -138,10 +109,10 @@ func TestHandleBuiltinCommand_Reset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// 重置前的消息数量
-			beforeCount := engine.GetMessageCount()
+			beforeCount := session.MessageCount()
 
 			output := captureOutput(func() {
-				handleBuiltinCommand(tt.input, engine)
+				handleBuiltinCommand(tt.input, orch, "cli", "test")
 			})
 
 			// 验证输出包含重置信息
@@ -153,7 +124,7 @@ func TestHandleBuiltinCommand_Reset(t *testing.T) {
 			}
 
 			// 验证消息数量减少（只保留系统消息）
-			afterCount := engine.GetMessageCount()
+			afterCount := session.MessageCount()
 			if afterCount != 1 {
 				t.Errorf("重置后应只剩系统消息，消息数量应为 1, got: %d", afterCount)
 			}
@@ -163,16 +134,14 @@ func TestHandleBuiltinCommand_Reset(t *testing.T) {
 		})
 
 		// 恢复消息以便下次测试
-		engine.AddUserMessage("test message 1")
-		engine.AddUserMessage("test message 2")
+		session.AppendUserMessage("test message 1")
+		session.AppendUserMessage("test message 2")
 	}
-
-	_ = initialCount // 避免未使用变量警告
 }
 
 // TestHandleBuiltinCommand_History 测试 history 命令
 func TestHandleBuiltinCommand_History(t *testing.T) {
-	engine := newTestEngine()
+	orch := orchestrator.New(nil)
 
 	tests := []struct {
 		name  string
@@ -186,10 +155,10 @@ func TestHandleBuiltinCommand_History(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			output := captureOutput(func() {
-				handleBuiltinCommand(tt.input, engine)
+				handleBuiltinCommand(tt.input, orch, "cli", "test")
 			})
 
-			// history 命令现在显示消息数量
+			// history 命令显示消息数量
 			if !strings.Contains(output, "对话消息数") {
 				t.Errorf("history 命令输出应包含 '对话消息数', got: %s", output)
 			}
@@ -199,7 +168,7 @@ func TestHandleBuiltinCommand_History(t *testing.T) {
 
 // TestHandleBuiltinCommand_Unknown 测试未知命令
 func TestHandleBuiltinCommand_Unknown(t *testing.T) {
-	engine := newTestEngine()
+	orch := orchestrator.New(nil)
 
 	tests := []struct {
 		name  string
@@ -207,7 +176,7 @@ func TestHandleBuiltinCommand_Unknown(t *testing.T) {
 	}{
 		{"empty", ""},
 		{"random", "randomcommand"},
-		{"partial", "hel"},  // 不是完整的 help
+		{"partial", "hel"},   // 不是完整的 help
 		{"partial2", "rese"}, // 不是完整的 reset
 		{"with spaces", "help me"}, // 带空格的命令
 		{"number", "123"},
@@ -215,7 +184,7 @@ func TestHandleBuiltinCommand_Unknown(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := handleBuiltinCommand(tt.input, engine)
+			result := handleBuiltinCommand(tt.input, orch, "cli", "test")
 			// 未知命令应该返回 false
 			if result != false {
 				t.Errorf("未知命令 '%s' 应该返回 false, got: %v", tt.input, result)
@@ -313,9 +282,9 @@ func TestPrintWelcome(t *testing.T) {
 		printWelcome()
 	})
 
-	// 验证欢迎信息包含关键内容（ASCII art banner）
+	// 验证欢迎信息包含关键内容
 	expectedStrings := []string{
-		"AI 编程助手",  // 标题
+		"AI 编程助手", // 标题
 	}
 
 	for _, expected := range expectedStrings {
@@ -323,13 +292,6 @@ func TestPrintWelcome(t *testing.T) {
 			t.Errorf("欢迎信息应包含 '%s'", expected)
 		}
 	}
-}
-
-// TestPrintHelp 测试帮助信息输出
-func TestPrintHelp(t *testing.T) {
-	// printHelp() 已被移除，使用 ui.HelpPanel()
-	// 跳过此测试
-	t.Skip("printHelp 已移除，使用 ui.HelpPanel()")
 }
 
 // TestClearScreen 测试清屏函数
