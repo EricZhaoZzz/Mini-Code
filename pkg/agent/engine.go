@@ -216,15 +216,63 @@ func buildSystemPrompt() string {
 		shellHint = "如果必须执行 shell 命令，请使用 Unix shell 语法。"
 	}
 
-	return fmt.Sprintf(
-		"你是一个中文 AI 编程助手 Mini-Code。当前运行环境是 %s。%s "+
-			"处理代码任务时，必须优先使用 list_files、search_in_files、read_file 理解项目，再进行修改。"+
-			"所有文件路径必须使用工作区内的相对路径，不能访问工作区外的文件。"+
-			"修改代码时，优先使用 replace_in_file 做最小修改，只有在必要时才使用 write_file 整体重写文件。"+
-			"修改后优先运行 run_shell 执行 go test ./... 做验证。",
-		osName,
-		shellHint,
-	)
+	return fmt.Sprintf(`你是一个专业的中文 AI 编程助手 Mini-Code。你的核心职责是帮助用户完成各类软件开发任务。
+
+## 运行环境
+- 操作系统: %s
+- %s
+
+## 核心工作流程
+
+### 1. 理解项目（必须首先执行）
+在开始任何代码修改之前，你必须先理解项目结构：
+- 使用 list_files 浏览目录结构，了解项目组织方式
+- 使用 search_in_files 搜索关键代码，定位相关模块
+- 使用 read_file 阅读关键文件，理解现有实现
+
+### 2. 分析需求
+- 仔细理解用户的任务目标
+- 识别需要修改的文件和范围
+- 考虑对现有代码的影响
+
+### 3. 执行修改
+- 优先使用 replace_in_file 进行最小化修改，保持代码的一致性和可追溯性
+- 只有在创建新文件或文件需要大规模重写时才使用 write_file
+- 保持代码风格与项目现有风格一致
+
+### 4. 验证结果
+- 修改完成后，运行 go test ./... 验证代码正确性
+- 如果测试失败，分析错误并修复
+
+## 工具使用规范
+
+### 文件操作
+- 所有文件路径必须是工作区内的相对路径，禁止访问工作区外的文件
+- 使用 replace_in_file 时，old 参数必须与文件中的原始文本完全匹配
+- 写入文件时保持合理的缩进和格式
+
+### Shell 命令
+- 仅在必要时使用 shell 命令
+- 命令应该简洁明确，避免复杂的管道操作
+- 注意处理命令的输出和错误
+
+### 搜索操作
+- 使用 search_in_files 时，query 应该精确匹配目标文本
+- 可以通过 path 参数限定搜索范围，提高效率
+
+## 代码质量要求
+
+1. **保持一致性**: 新代码应与现有代码风格保持一致
+2. **最小修改原则**: 只修改必要的部分，避免不必要的重构
+3. **错误处理**: 适当处理边界情况和错误
+4. **代码注释**: 在复杂逻辑处添加必要的注释
+
+## 沟通规范
+
+1. 用中文回复用户
+2. 说明你正在执行的操作和原因
+3. 如果遇到问题，清晰地描述问题并提供解决建议
+4. 完成任务后简要总结所做的修改`, osName, shellHint)
 }
 
 func (e *ClawEngine) AddUserMessage(message string) {
@@ -264,7 +312,7 @@ func (e *ClawEngine) GetMaxTurns() int {
 }
 
 // printVerbose 详细模式下打印信息
-func (e *ClawEngine) printVerbose(format string, args ...interface{}) {
+func (e *ClawEngine) printVerbose(format string, args ...any) {
 	if e.verbose {
 		ui.PrintDim(format, args...)
 	}
@@ -272,12 +320,10 @@ func (e *ClawEngine) printVerbose(format string, args ...interface{}) {
 
 func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 	for i := 0; ; i++ {
-		// 检查轮次限制
+		// 安全兜底：防止异常情况下的无限循环
 		if e.maxTurns > 0 && i >= e.maxTurns {
 			return "", fmt.Errorf("达到最大工具调用轮数 (%d)，任务中止。可通过设置环境变量 LM_MAX_TURNS 调整限制", e.maxTurns)
 		}
-
-		// 在接近限制时显示警告
 		if e.maxTurns > 0 && i >= e.maxTurns-5 && i < e.maxTurns {
 			e.printVerbose("[警告] 剩余轮次: %d", e.maxTurns-i)
 		}
@@ -297,11 +343,43 @@ func (e *ClawEngine) RunTurn(ctx context.Context) (string, error) {
 		}
 		e.debugLog("LM OUTPUT", resp)
 
-		msg := resp.Choices[0].Message
-		e.printVerbose("[assistant] content=%q tool_calls=%d", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
+		choice := resp.Choices[0]
+		msg := choice.Message
+		e.printVerbose("[assistant] finish_reason=%s content=%q tool_calls=%d",
+			choice.FinishReason, truncateForLog(msg.Content, 400), len(msg.ToolCalls))
 		e.messages = append(e.messages, msg)
 
-		if len(msg.ToolCalls) == 0 {
+		// 如果有工具调用，执行工具并继续对话
+		if len(msg.ToolCalls) > 0 {
+			// 显示工具调用摘要
+			e.displayToolCallsStart(msg.ToolCalls)
+
+			// 并发执行工具调用
+			results := e.executeToolCallsConcurrently(ctx, msg.ToolCalls)
+			e.displayToolCallsResults(results)
+
+			for _, result := range results {
+				e.messages = append(e.messages, openai.ChatCompletionMessage{
+					Role:       openai.ChatMessageRoleTool,
+					Content:    result.resultStr,
+					ToolCallID: result.toolCallID,
+				})
+			}
+			continue
+		}
+
+		// 没有工具调用，根据 finish_reason 决定是否继续
+		switch choice.FinishReason {
+		case openai.FinishReasonStop, "":
+			// 正常结束（部分模型 finish_reason 可能为空字符串）
+			return msg.Content, nil
+		case openai.FinishReasonLength:
+			// 达到 token 上限，返回已有内容并提示
+			return msg.Content, fmt.Errorf("响应因达到 token 上限而被截断")
+		case openai.FinishReasonContentFilter:
+			return msg.Content, fmt.Errorf("响应被内容安全过滤器拦截")
+		default:
+			// 其他情况，返回内容
 			return msg.Content, nil
 		}
 
@@ -353,6 +431,7 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 		var contentBuilder strings.Builder
 		var toolCalls []openai.ToolCall
 		var toolCallsDelta = make(map[int]*strings.Builder)
+		var finishReason openai.FinishReason
 
 		for {
 			response, err := stream.Recv()
@@ -370,7 +449,8 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 				continue
 			}
 
-			delta := response.Choices[0].Delta
+			choice := response.Choices[0]
+			delta := choice.Delta
 
 			// 处理内容
 			if delta.Content != "" {
@@ -403,8 +483,9 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 				}
 			}
 
-			// 检查是否完成
-			if response.Choices[0].FinishReason != "" {
+			// 捕获 finish_reason 并结束流
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
 				stream.Close()
 				break
 			}
@@ -424,9 +505,10 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 			}
 		}
 
-		e.debugLog("LM OUTPUT STREAM", map[string]interface{}{
-			"content":    contentBuilder.String(),
-			"tool_calls": len(toolCalls),
+		e.debugLog("LM OUTPUT STREAM", map[string]any{
+			"content":       contentBuilder.String(),
+			"tool_calls":    len(toolCalls),
+			"finish_reason": finishReason,
 		})
 
 		// 构建消息
@@ -438,30 +520,43 @@ func (e *ClawEngine) RunTurnStream(ctx context.Context, handler StreamChunkHandl
 			msg.ToolCalls = toolCalls
 		}
 
-		e.printVerbose("[assistant-stream] content=%q tool_calls=%d", truncateForLog(msg.Content, 400), len(msg.ToolCalls))
+		e.printVerbose("[assistant-stream] finish_reason=%s content=%q tool_calls=%d",
+			finishReason, truncateForLog(msg.Content, 400), len(msg.ToolCalls))
 		e.messages = append(e.messages, msg)
 
-		if len(toolCalls) == 0 {
-			return msg.Content, nil
+		// 如果有工具调用，执行工具并继续对话
+		if len(toolCalls) > 0 {
+			// 显示工具调用摘要
+			fmt.Println()
+			e.displayToolCallsStart(toolCalls)
+
+			// 并发执行工具调用
+			results := e.executeToolCallsConcurrently(ctx, toolCalls)
+			e.displayToolCallsResults(results)
+
+			// 继续对话前显示提示
+			ui.PrintDim("  等待响应...")
+
+			for _, result := range results {
+				e.messages = append(e.messages, openai.ChatCompletionMessage{
+					Role:       openai.ChatMessageRoleTool,
+					Content:    result.resultStr,
+					ToolCallID: result.toolCallID,
+				})
+			}
+			continue
 		}
 
-		// 显示工具调用摘要
-		fmt.Println()
-		e.displayToolCallsStart(msg.ToolCalls)
-
-		// 并发执行工具调用
-		results := e.executeToolCallsConcurrently(ctx, msg.ToolCalls)
-		e.displayToolCallsResults(results)
-
-		// 继续对话前显示提示
-		ui.PrintDim("  等待响应...")
-
-		for _, result := range results {
-			e.messages = append(e.messages, openai.ChatCompletionMessage{
-				Role:       openai.ChatMessageRoleTool,
-				Content:    result.resultStr,
-				ToolCallID: result.toolCallID,
-			})
+		// 没有工具调用，根据 finish_reason 决定是否继续
+		switch finishReason {
+		case openai.FinishReasonStop, "":
+			return msg.Content, nil
+		case openai.FinishReasonLength:
+			return msg.Content, fmt.Errorf("响应因达到 token 上限而被截断")
+		case openai.FinishReasonContentFilter:
+			return msg.Content, fmt.Errorf("响应被内容安全过滤器拦截")
+		default:
+			return msg.Content, nil
 		}
 	}
 }
@@ -481,7 +576,7 @@ func (e *ClawEngine) displayToolCallsStart(toolCalls []openai.ToolCall) {
 		}
 
 		// 解析参数以获取更友好的显示
-		var args map[string]interface{}
+		var args map[string]any
 		json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
 		var argsSummary string

@@ -889,7 +889,7 @@ func TestSearchInFilesNonExistentPath(t *testing.T) {
 	}
 }
 
-func TestSearchInFilesSkipsBinaryFiles(t *testing.T) {
+func TestSearchInFilesSkipsBinaryFilesByExtension(t *testing.T) {
 	workspace := t.TempDir()
 	restore := chdirForTest(t, workspace)
 	defer restore()

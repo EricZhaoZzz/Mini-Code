@@ -7,22 +7,15 @@ import (
 )
 
 type ReplaceInFileArguments struct {
-	Path string `json:"path"`
-	Old  string `json:"old"`
-	New  string `json:"new"`
+	Path string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要修改的工作区内相对路径"`
+	Old  string `json:"old" validate:"required" jsonschema:"required" jsonschema_description:"要替换的原始文本"`
+	New  string `json:"new" jsonschema_description:"替换后的文本"`
 }
 
 func ReplaceInFile(args interface{}) (interface{}, error) {
 	var params ReplaceInFileArguments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
-	}
-
-	if strings.TrimSpace(params.Path) == "" {
-		return nil, fmt.Errorf("path 不能为空")
-	}
-	if params.Old == "" {
-		return nil, fmt.Errorf("old 不能为空")
 	}
 
 	targetPath, err := resolveWorkspacePath(params.Path)
@@ -41,7 +34,7 @@ func ReplaceInFile(args interface{}) (interface{}, error) {
 	}
 
 	updated := strings.Replace(content, params.Old, params.New, 1)
-	if err := os.WriteFile(targetPath, []byte(updated), 0o644); err != nil {
+	if err := writeFileAtomically(targetPath, []byte(updated), 0o644); err != nil {
 		return nil, fmt.Errorf("写回文件失败: %w", err)
 	}
 
