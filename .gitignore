@@ -1,5 +1,6 @@
 # 敏感配置文件
 .env
+.env.local
 config.json
 
 # Go 编译产物

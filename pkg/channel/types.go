@@ -8,8 +8,8 @@ type Channel interface {
 	Start(ctx context.Context) error
 	// Messages 返回接收消息的只读通道
 	Messages() <-chan IncomingMessage
-	// Send 发送文本响应
-	Send(msg OutgoingMessage) error
+	// Send 发送文本响应，返回消息 ID（用于后续 EditMessage）
+	Send(msg OutgoingMessage) (messageID string, err error)
 	// SendFile 发送文件附件
 	SendFile(chatID string, path string) error
 	// EditMessage 更新已发送的消息（CLI 为 no-op，Telegram 用于流式刷新）

@@ -126,3 +126,46 @@ func (s *Store) LoadLongTermMemory(scope, workspace string, limit int) ([]Recall
 	}
 	return results, rows.Err()
 }
+
+// MemoryListResult 用于列表显示的记忆记录
+type MemoryListResult struct {
+	ID      int64
+	Scope   string
+	Content string
+	Tags    []string
+}
+
+// GetAll 获取所有记忆记录（用于 /memory 命令）
+func (s *Store) GetAll() ([]MemoryListResult, error) {
+	var results []MemoryListResult
+
+	// 从全局 DB 获取 user 和 global scope
+	rows, err := s.globalDB.Query(`SELECT id, scope, content, tags FROM long_term_memory ORDER BY created_at DESC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var r MemoryListResult
+			var tagsJSON string
+			if err := rows.Scan(&r.ID, &r.Scope, &r.Content, &tagsJSON); err == nil {
+				json.Unmarshal([]byte(tagsJSON), &r.Tags)
+				results = append(results, r)
+			}
+		}
+	}
+
+	// 从项目 DB 获取 project scope
+	rows, err = s.projectDB.Query(`SELECT id, scope, content, tags FROM long_term_memory ORDER BY created_at DESC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var r MemoryListResult
+			var tagsJSON string
+			if err := rows.Scan(&r.ID, &r.Scope, &r.Content, &tagsJSON); err == nil {
+				json.Unmarshal([]byte(tagsJSON), &r.Tags)
+				results = append(results, r)
+			}
+		}
+	}
+
+	return results, nil
+}

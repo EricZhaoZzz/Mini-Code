@@ -58,10 +58,10 @@ func (c *CLIChannel) Start(ctx context.Context) error {
 }
 
 // Send 发送文本响应
-func (c *CLIChannel) Send(msg channel.OutgoingMessage) error {
+func (c *CLIChannel) Send(msg channel.OutgoingMessage) (string, error) {
 	// 流式输出由 Orchestrator 的 handler 直接调用 ui，此处处理非流式响应
 	fmt.Print(msg.Text)
-	return nil
+	return "", nil // CLI 不需要消息 ID
 }
 
 // SendFile 发送文件附件
