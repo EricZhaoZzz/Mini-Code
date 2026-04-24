@@ -233,6 +233,14 @@ func RunShell(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
+	command := strings.TrimSpace(params.Command)
+	if result, handled, err := handleRestartCommand(command); handled {
+		if result == "" && err == nil {
+			return "", fmt.Errorf("重启处理器未初始化")
+		}
+		return result, err
+	}
+
 	root, err := workspaceRoot()
 	if err != nil {
 		return nil, err
@@ -250,9 +258,9 @@ func RunShell(args interface{}) (interface{}, error) {
 
 	var runner *cmd.Cmd
 	if runtime.GOOS == "windows" {
-		runner = cmd.NewCmdOptions(options, "cmd", "/C", params.Command)
+		runner = cmd.NewCmdOptions(options, "cmd", "/C", command)
 	} else {
-		runner = cmd.NewCmdOptions(options, "sh", "-c", params.Command)
+		runner = cmd.NewCmdOptions(options, "sh", "-c", command)
 	}
 
 	status := <-runner.Start()

@@ -23,10 +23,10 @@ type BaseAgent struct {
 	maxConcurrency       int
 	verbose              bool
 	maxTurns             int
-	systemPromptOverride string // Phase 3: specialized agent system prompt
-	agentName            string // Phase 3: agent name
+	systemPromptOverride string                         // Phase 3: specialized agent system prompt
+	agentName            string                         // Phase 3: agent name
 	legacyMessages       []openai.ChatCompletionMessage // 兼容旧 ClawEngine 接口，管理内部消息历史
-	memStore             *memory.Store // Phase 2: 记忆存储
+	memStore             *memory.Store                  // Phase 2: 记忆存储
 }
 
 func NewBaseAgent(p provider.Provider, model string, allowedTools []string) *BaseAgent {
@@ -76,11 +76,11 @@ func (a *BaseAgent) filteredDefinitions() []openai.Tool {
 }
 
 func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMessage, handler StreamChunkHandler) (string, []openai.ChatCompletionMessage, error) {
-	// Apply system prompt override (Phase 3 specialized agents)
+	// Specialized agents extend the shared system prompt instead of replacing it.
 	if a.systemPromptOverride != "" && len(messages) > 0 && messages[0].Role == "system" {
 		overrideMsgs := make([]openai.ChatCompletionMessage, len(messages))
 		copy(overrideMsgs, messages)
-		overrideMsgs[0].Content = a.systemPromptOverride
+		overrideMsgs[0].Content = combineSystemPrompt(messages[0].Content, a.systemPromptOverride)
 		messages = overrideMsgs
 	}
 

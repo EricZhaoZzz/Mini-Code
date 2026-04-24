@@ -8,6 +8,15 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+type SessionSnapshot struct {
+	ID        string                         `json:"id"`
+	ChannelID string                         `json:"channel_id"`
+	UserID    string                         `json:"user_id"`
+	AgentType string                         `json:"agent_type"`
+	Messages  []openai.ChatCompletionMessage `json:"messages"`
+	LastSeen  time.Time                      `json:"last_seen"`
+}
+
 // Session 管理单个用户的对话状态
 type Session struct {
 	ID        string
@@ -114,5 +123,46 @@ func (s *Session) UpdateSystemPrompt(prompt string) {
 	defer s.mu.Unlock()
 	if len(s.messages) > 0 && s.messages[0].Role == openai.ChatMessageRoleSystem {
 		s.messages[0].Content = prompt
+	}
+}
+
+func (s *Session) ExportSnapshot() SessionSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	messages := make([]openai.ChatCompletionMessage, len(s.messages))
+	copy(messages, s.messages)
+
+	return SessionSnapshot{
+		ID:        s.ID,
+		ChannelID: s.ChannelID,
+		UserID:    s.UserID,
+		AgentType: s.agentType,
+		Messages:  messages,
+		LastSeen:  s.lastSeen,
+	}
+}
+
+func newSessionFromSnapshot(snapshot SessionSnapshot) *Session {
+	messages := make([]openai.ChatCompletionMessage, len(snapshot.Messages))
+	copy(messages, snapshot.Messages)
+
+	lastSeen := snapshot.LastSeen
+	if lastSeen.IsZero() {
+		lastSeen = time.Now()
+	}
+
+	agentType := snapshot.AgentType
+	if agentType == "" {
+		agentType = "coder"
+	}
+
+	return &Session{
+		ID:        snapshot.ID,
+		ChannelID: snapshot.ChannelID,
+		UserID:    snapshot.UserID,
+		agentType: agentType,
+		messages:  messages,
+		lastSeen:  lastSeen,
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mini-code/pkg/channel"
+	"mini-code/pkg/textutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,24 +12,25 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // TelegramChannel 实现 Telegram Bot 的 Channel 接口
 type TelegramChannel struct {
-	bot           *tgbotapi.BotAPI
-	messages      chan channel.IncomingMessage
-	allowedUsers  map[int64]bool
-	tempDir       string
+	bot          *tgbotapi.BotAPI
+	messages     chan channel.IncomingMessage
+	allowedUsers map[int64]bool
+	tempDir      string
 
 	// 消息管理：每个 chatID 对应当前正在更新的消息 ID
-	editMsgs      map[int64]int64 // chatID -> messageID
-	editMsgsMu    sync.Mutex
+	editMsgs   map[int64]int64 // chatID -> messageID
+	editMsgsMu sync.Mutex
 
 	// 完成消息管理：用于 NotifyDone
-	pendingText   map[int64]string // chatID -> 当前累积的流式文本
-	pendingMu     sync.Mutex
+	pendingText map[int64]string // chatID -> 当前累积的流式文本
+	pendingMu   sync.Mutex
 
 	// 流式更新控制
 	updateInterval time.Duration // 流式刷新间隔
@@ -36,9 +38,9 @@ type TelegramChannel struct {
 
 // Config Telegram Channel 配置
 type Config struct {
-	Token         string
-	AllowedUsers  []int64
-	TempDir       string
+	Token          string
+	AllowedUsers   []int64
+	TempDir        string
 	UpdateInterval time.Duration // 流式刷新间隔，默认 1.5s
 }
 
@@ -75,12 +77,12 @@ func New(cfg Config) (*TelegramChannel, error) {
 	}
 
 	return &TelegramChannel{
-		bot:           bot,
-		messages:      make(chan channel.IncomingMessage, 10),
-		allowedUsers:  allowed,
-		tempDir:       tempDir,
-		editMsgs:      make(map[int64]int64),
-		pendingText:   make(map[int64]string),
+		bot:            bot,
+		messages:       make(chan channel.IncomingMessage, 10),
+		allowedUsers:   allowed,
+		tempDir:        tempDir,
+		editMsgs:       make(map[int64]int64),
+		pendingText:    make(map[int64]string),
 		updateInterval: interval,
 	}, nil
 }
@@ -217,22 +219,24 @@ func (tc *TelegramChannel) Send(msg channel.OutgoingMessage) (string, error) {
 		return "", err
 	}
 
+	safeText := textutil.SanitizeUTF8(msg.Text)
+
 	// 保存待发送文本用于流式更新
 	tc.pendingMu.Lock()
-	tc.pendingText[chatID] = msg.Text
+	tc.pendingText[chatID] = safeText
 	tc.pendingMu.Unlock()
 
 	// 如果有消息 ID，尝试编辑
 	if msg.MessageID != "" {
 		msgID, _ := strconv.ParseInt(msg.MessageID, 10, 64)
-		if err := tc.editMessage(chatID, msgID, msg.Text); err != nil {
+		if err := tc.editMessage(chatID, msgID, safeText); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%d:%d", chatID, msgID), nil
 	}
 
 	// 否则发送新消息
-	sentMsgID, err := tc.sendReplyWithID(chatID, 0, msg.Text)
+	sentMsgID, err := tc.sendReplyWithID(chatID, 0, safeText)
 	if err != nil {
 		return "", err
 	}
@@ -279,13 +283,16 @@ func (tc *TelegramChannel) EditMessage(msgID string, text string) error {
 
 // editMessage 编辑消息
 func (tc *TelegramChannel) editMessage(chatID, messageID int64, text string) error {
+	text = textutil.SanitizeUTF8(text)
+
 	// Telegram 消息长度限制
-	if len(text) > 4096 {
-		text = text[:4090] + "..."
+	if utf8.RuneCountInString(text) > 4096 {
+		text = textutil.TruncateWithEllipsis(text, 4096)
 	}
 
 	edit := tgbotapi.NewEditMessageText(chatID, int(messageID), text)
-	edit.ParseMode = "Markdown"
+	// 不使用 Markdown 模式，避免特殊字符解析问题
+	// edit.ParseMode = "Markdown"
 	_, err := tc.bot.Send(edit)
 	return err
 }
@@ -318,13 +325,16 @@ func (tc *TelegramChannel) sendReply(chatID int64, replyToMsgID int, text string
 
 // sendReplyWithID 发送回复消息并返回消息 ID
 func (tc *TelegramChannel) sendReplyWithID(chatID int64, replyToMsgID int, text string) (int, error) {
+	text = textutil.SanitizeUTF8(text)
+
 	// 自动分段
-	if len(text) <= 4096 {
+	if utf8.RuneCountInString(text) <= 4096 {
 		msg := tgbotapi.NewMessage(chatID, text)
 		if replyToMsgID > 0 {
 			msg.ReplyToMessageID = replyToMsgID
 		}
-		msg.ParseMode = "Markdown"
+		// 不使用 Markdown 模式，避免特殊字符解析问题
+		// msg.ParseMode = "Markdown"
 		sent, err := tc.bot.Send(msg)
 		if err != nil {
 			return 0, err
@@ -340,7 +350,8 @@ func (tc *TelegramChannel) sendReplyWithID(chatID int64, replyToMsgID int, text 
 		if i == 0 && replyToMsgID > 0 {
 			msg.ReplyToMessageID = replyToMsgID
 		}
-		msg.ParseMode = "Markdown"
+		// 不使用 Markdown 模式
+		// msg.ParseMode = "Markdown"
 		sent, err := tc.bot.Send(msg)
 		if err != nil {
 			return lastMsgID, err
@@ -363,37 +374,49 @@ func (tc *TelegramChannel) parseChatID(chatID string) (int64, error) {
 
 // splitMessage 将长消息分割成多段
 func splitMessage(text string, maxLen int) []string {
+	text = textutil.SanitizeUTF8(text)
+	if maxLen <= 0 {
+		return []string{text}
+	}
+
 	var segments []string
 	lines := strings.Split(text, "\n")
 	var current strings.Builder
+	currentLen := 0
 
 	for _, line := range lines {
-		if current.Len()+len(line)+1 > maxLen {
-			if current.Len() > 0 {
+		lineLen := utf8.RuneCountInString(line)
+		if currentLen+lineLen+1 > maxLen {
+			if currentLen > 0 {
 				segments = append(segments, current.String())
 				current.Reset()
+				currentLen = 0
 			}
 			// 如果单行超长，直接截断
-			if len(line) > maxLen {
-				for len(line) > maxLen {
-					segments = append(segments, line[:maxLen])
-					line = line[maxLen:]
-				}
-				if line != "" {
-					current.WriteString(line)
-					current.WriteString("\n")
+			if lineLen > maxLen {
+				lineSegments := textutil.SplitByRuneLength(line, maxLen)
+				for i, segment := range lineSegments {
+					if i == len(lineSegments)-1 {
+						current.WriteString(segment)
+						current.WriteString("\n")
+						currentLen = utf8.RuneCountInString(segment) + 1
+						break
+					}
+					segments = append(segments, segment)
 				}
 			} else {
 				current.WriteString(line)
 				current.WriteString("\n")
+				currentLen = lineLen + 1
 			}
 		} else {
 			current.WriteString(line)
 			current.WriteString("\n")
+			currentLen += lineLen + 1
 		}
 	}
 
-	if current.Len() > 0 {
+	if currentLen > 0 {
 		segments = append(segments, current.String())
 	}
 
@@ -437,4 +460,43 @@ func (tc *TelegramChannel) GetBotInfo() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("@%s (%s)", me.UserName, me.FirstName), nil
+}
+
+// RegisterCommands 注册 Bot 命令菜单
+// 这会让用户在 Telegram 客户端中看到可用的命令列表
+func (tc *TelegramChannel) RegisterCommands() error {
+	commands := []tgbotapi.BotCommand{
+		{
+			Command:     "start",
+			Description: "显示欢迎信息",
+		},
+		{
+			Command:     "help",
+			Description: "显示帮助信息",
+		},
+		{
+			Command:     "reset",
+			Description: "重置当前会话",
+		},
+		{
+			Command:     "status",
+			Description: "查看会话状态",
+		},
+		{
+			Command:     "cancel",
+			Description: "取消当前任务",
+		},
+		{
+			Command:     "memory",
+			Description: "查看已保存的记忆",
+		},
+	}
+
+	setCommands := tgbotapi.NewSetMyCommands(commands...)
+	_, err := tc.bot.Request(setCommands)
+	if err != nil {
+		return fmt.Errorf("failed to register commands: %w", err)
+	}
+
+	return nil
 }

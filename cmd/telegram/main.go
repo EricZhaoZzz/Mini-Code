@@ -34,6 +34,7 @@ func main() {
 		ui.PrintError("缺少必要环境变量 API_KEY / BASE_URL / MODEL")
 		os.Exit(1)
 	}
+
 	if botToken == "" {
 		ui.PrintError("缺少 TELEGRAM_BOT_TOKEN 环境变量")
 		os.Exit(1)
@@ -66,18 +67,23 @@ func main() {
 	globalDBPath := filepath.Join(homeDir, ".mini-code", "memory.db")
 	projectDBPath := filepath.Join(".", ".mini-code", "project.db")
 
-	os.MkdirAll(filepath.Dir(globalDBPath), 0o755)
-	os.MkdirAll(filepath.Dir(projectDBPath), 0o755)
+	// 确保目录存在
+	if err := os.MkdirAll(filepath.Dir(globalDBPath), 0o755); err != nil {
+		ui.PrintError("创建全局记忆目录失败: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(projectDBPath), 0o755); err != nil {
+		ui.PrintError("创建项目记忆目录失败: %v", err)
+	}
 
 	memStore, err := memory.Open(globalDBPath, projectDBPath)
 	if err != nil {
 		ui.PrintError("Memory 初始化失败: %v", err)
-		memStore = nil
+		// 不再设置为 nil，而是直接退出
+		os.Exit(1)
 	}
-	if memStore != nil {
-		defer memStore.Close()
-		tools.SetMemoryStore(memStore)
-	}
+	defer memStore.Close()
+	tools.SetMemoryStore(memStore)
+	ui.PrintSuccess("Memory 初始化成功")
 
 	// 创建 Telegram Runner
 	runner, err := telegram.NewRunner(telegram.Config{

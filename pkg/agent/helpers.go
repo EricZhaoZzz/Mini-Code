@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mini-code/pkg/textutil"
 	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
 	"os"
@@ -66,10 +67,7 @@ func newDebugLogger() *log.Logger {
 func truncateForLog(s string, limit int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.TrimSpace(s)
-	if len(s) <= limit {
-		return s
-	}
-	return s[:limit] + "..."
+	return textutil.TruncateWithEllipsis(s, limit)
 }
 
 // executeToolCall 执行单个工具调用

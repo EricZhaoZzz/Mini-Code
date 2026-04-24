@@ -2,13 +2,14 @@ package telegram
 
 import (
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSplitMessage(t *testing.T) {
 	tests := []struct {
-		name       string
-		text       string
-		maxLen     int
+		name        string
+		text        string
+		maxLen      int
 		minSegments int // 最少分段数量
 		maxSegments int // 最多分段数量
 	}{
@@ -99,5 +100,20 @@ func TestParseChatID(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSplitMessage_PreservesUTF8(t *testing.T) {
+	text := "你好世界🙂编程"
+
+	segments := splitMessage(text, 4)
+
+	if len(segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(segments))
+	}
+	for i, segment := range segments {
+		if !utf8.ValidString(segment) {
+			t.Fatalf("expected segment %d to be valid UTF-8, got %q", i, segment)
+		}
 	}
 }

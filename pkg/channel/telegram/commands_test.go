@@ -4,6 +4,7 @@ import (
 	"mini-code/pkg/channel"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestCommandHandler_Handle(t *testing.T) {
@@ -80,6 +81,17 @@ func TestTruncate(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.input, result)
 			}
 		})
+	}
+}
+
+func TestTruncate_PreservesUTF8(t *testing.T) {
+	result := truncate("你好世界🙂编程", 5)
+
+	if result != "你好..." {
+		t.Fatalf("expected %q, got %q", "你好...", result)
+	}
+	if !utf8.ValidString(result) {
+		t.Fatalf("expected valid UTF-8, got %q", result)
 	}
 }
 

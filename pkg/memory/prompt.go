@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"mini-code/pkg/textutil"
 	"strings"
 )
 
@@ -47,8 +48,8 @@ func (s *Store) BuildPromptSuffix(workspace string) string {
 	result := sb.String()
 
 	// 截断到最大长度
-	if len(result) > maxPromptSuffixChars {
-		result = result[:maxPromptSuffixChars]
+	if len([]rune(result)) > maxPromptSuffixChars {
+		result = textutil.TruncateRunes(result, maxPromptSuffixChars)
 		// 确保不截断在汉字中间
 		result = strings.TrimRight(result, "\n-: ")
 		result += "\n... (记忆已截断)"

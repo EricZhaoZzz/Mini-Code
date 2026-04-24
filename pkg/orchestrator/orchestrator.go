@@ -6,12 +6,13 @@ import (
 	"mini-code/pkg/agent"
 	"mini-code/pkg/channel"
 	"mini-code/pkg/memory"
+	"mini-code/pkg/textutil"
 	"mini-code/pkg/ui"
-	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sashabaranov/go-openai"
 )
 
 // StreamMode 流式输出模式
@@ -36,12 +37,18 @@ type StreamHandler interface {
 	OnWaiting()
 }
 
+type RestartRuntime interface {
+	HasPendingRestart() bool
+	ApplyPendingRestart(snapshot SessionSnapshot) error
+}
+
 // Orchestrator 管理 Session，路由消息到 Agent
 type Orchestrator struct {
 	sessions map[string]*Session
-	mu        sync.Mutex
-	memStore  *memory.Store
-	router    *Router
+	mu       sync.Mutex
+	memStore *memory.Store
+	router   *Router
+	restart  RestartRuntime
 }
 
 // New 创建新的 Orchestrator
@@ -66,6 +73,24 @@ func (o *Orchestrator) GetOrCreateSession(channelID, userID string) *Session {
 	s := newSession(channelID, userID, o.buildSystemPrompt())
 	o.sessions[key] = s
 	return s
+}
+
+func (o *Orchestrator) RestoreSession(snapshot SessionSnapshot) *Session {
+	key := snapshot.ChannelID + ":" + snapshot.UserID
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	session := newSessionFromSnapshot(snapshot)
+	if len(session.messages) == 0 {
+		session.messages = []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: o.buildSystemPrompt()},
+		}
+	} else if session.messages[0].Role == openai.ChatMessageRoleSystem && session.messages[0].Content == "" {
+		session.messages[0].Content = o.buildSystemPrompt()
+	}
+
+	o.sessions[key] = session
+	return session
 }
 
 // AgentFactory 根据类型创建 Agent
@@ -93,11 +118,17 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 
 	// 根据 Channel 类型选择不同的处理方式
 	isTelegram := strings.HasPrefix(msg.ChannelID, "telegram:")
-	
+
 	if isTelegram {
-		return o.handleTelegram(runCtx, session, agnt, msg, ch)
+		if err := o.handleTelegram(runCtx, session, agnt, msg, ch); err != nil {
+			return err
+		}
+		return o.applyPendingRestart(session)
 	}
-	return o.handleCLI(runCtx, session, agnt, ch)
+	if err := o.handleCLI(runCtx, session, agnt, ch); err != nil {
+		return err
+	}
+	return o.applyPendingRestart(session)
 }
 
 // handleCLI CLI 模式的处理
@@ -136,11 +167,11 @@ func (o *Orchestrator) handleCLI(ctx context.Context, session *Session, agnt age
 // handleTelegram Telegram 模式的处理（支持流式 EditMessage）
 func (o *Orchestrator) handleTelegram(ctx context.Context, session *Session, agnt agent.Agent, msg channel.IncomingMessage, ch channel.Channel) error {
 	chatID := msg.ChannelID
-	
+
 	// 发送初始占位消息
 	msgID, err := ch.Send(channel.OutgoingMessage{
 		ChatID: chatID,
-		Text:  "⏳ 正在处理...",
+		Text:   "⏳ 正在处理...",
 	})
 	if err != nil {
 		return fmt.Errorf("send initial message: %w", err)
@@ -172,9 +203,7 @@ func (o *Orchestrator) handleTelegram(ctx context.Context, session *Session, agn
 		if time.Since(lastUpdate) > updateInterval && contentBuffer.Len() > 0 {
 			text := contentBuffer.String()
 			// Telegram 消息长度限制
-			if len(text) > 4000 {
-				text = text[:3990] + "..."
-			}
+			text = textutil.TruncateWithEllipsis(text, 4000)
 			if msgID != "" {
 				ch.EditMessage(msgID, text)
 			}
@@ -235,83 +264,7 @@ func (o *Orchestrator) buildSystemPrompt() string {
 
 // buildSystemPromptWithMemory 构建带记忆的系统提示
 func (o *Orchestrator) buildSystemPromptWithMemory() string {
-	osName := runtime.GOOS
-	var shellHint string
-	switch osName {
-	case "windows":
-		shellHint = "如果必须执行 shell 命令，请使用 Windows CMD 语法。"
-	default:
-		shellHint = "如果必须执行 shell 命令，请使用 Unix shell 语法。"
-	}
-
-	basePrompt := fmt.Sprintf(`你是一个专业的中文 AI 编程助手 Mini-Code。你的核心职责是帮助用户完成各类软件开发任务。
-
-## 运行环境
-- 操作系统: %s
-- %s
-
-## 核心工作流程
-
-### 1. 理解项目（必须首先执行）
-在开始任何代码修改之前，你必须先理解项目结构：
-- 使用 list_files 浏览目录结构，了解项目组织方式
-- 使用 search_in_files 搜索关键代码，定位相关模块
-- 使用 read_file 阅读关键文件，理解现有实现
-
-### 2. 分析需求
-- 仔细理解用户的任务目标
-- 识别需要修改的文件和范围
-- 考虑对现有代码的影响
-
-### 3. 执行修改
-- 优先使用 replace_in_file 进行最小化修改，保持代码的一致性和可追溯性
-- 只有在创建新文件或文件需要大规模重写时才使用 write_file
-- 保持代码风格与项目现有风格一致
-
-### 4. 验证结果
-- 修改完成后，运行 go test ./... 验证代码正确性
-- 如果测试失败，分析错误并修复
-
-## 工具使用规范
-
-### 文件操作
-- 所有文件路径必须是工作区内的相对路径，禁止访问工作区外的文件
-- 使用 replace_in_file 时，old 参数必须与文件中的原始文本完全匹配
-- 写入文件时保持合理的缩进和格式
-
-### Shell 命令
-- 仅在必要时使用 shell 命令
-- 命令应该简洁明确，避免复杂的管道操作
-- 注意处理命令的输出和错误
-
-### 搜索操作
-- 使用 search_in_files 时，query 应该精确匹配目标文本
-- 可以通过 path 参数限定搜索范围，提高效率
-
-## 代码质量要求
-
-1. **保持一致性**: 新代码应与现有代码风格保持一致
-2. **最小修改原则**: 只修改必要的部分，避免不必要的重构
-3. **错误处理**: 适当处理边界情况和错误
-4. **代码注释**: 在复杂逻辑处添加必要的注释
-
-## 沟通规范
-
-1. 用中文回复用户
-2. 说明你正在执行的操作和原因
-3. 如果遇到问题，清晰地描述问题并提供解决建议
-4. 完成任务后简要总结所做的修改`, osName, shellHint)
-
-	// 注入记忆后缀
-	if o.memStore != nil {
-		workspace, _ := os.Getwd()
-		suffix := o.memStore.BuildPromptSuffix(workspace)
-		if suffix != "" {
-			basePrompt += suffix
-		}
-	}
-
-	return basePrompt
+	return agent.BuildSystemPromptWithMemory(o.memStore)
 }
 
 // GetMemoryStore 获取记忆存储
@@ -329,4 +282,15 @@ func (o *Orchestrator) RefreshSessionPrompt(channelID, userID string) {
 	if ok {
 		s.UpdateSystemPrompt(o.buildSystemPrompt())
 	}
+}
+
+func (o *Orchestrator) SetRestartRuntime(runtime RestartRuntime) {
+	o.restart = runtime
+}
+
+func (o *Orchestrator) applyPendingRestart(session *Session) error {
+	if o.restart == nil || !o.restart.HasPendingRestart() {
+		return nil
+	}
+	return o.restart.ApplyPendingRestart(session.ExportSnapshot())
 }

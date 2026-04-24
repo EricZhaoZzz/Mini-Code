@@ -5,19 +5,20 @@ import (
 	"mini-code/pkg/channel"
 	"mini-code/pkg/memory"
 	"mini-code/pkg/orchestrator"
+	"mini-code/pkg/textutil"
 	"strings"
 )
 
 // CommandHandler 处理 Telegram 命令
 type CommandHandler struct {
-	orch    *orchestrator.Orchestrator
+	orch     *orchestrator.Orchestrator
 	memStore *memory.Store
 }
 
 // NewCommandHandler 创建命令处理器
 func NewCommandHandler(orch *orchestrator.Orchestrator, memStore *memory.Store) *CommandHandler {
 	return &CommandHandler{
-		orch:    orch,
+		orch:     orch,
 		memStore: memStore,
 	}
 }
@@ -233,8 +234,5 @@ func (h *CommandHandler) handleHelp() CommandResult {
 
 // truncate 截断字符串
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
+	return textutil.TruncateWithEllipsis(s, maxLen)
 }

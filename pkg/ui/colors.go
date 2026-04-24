@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"mini-code/pkg/textutil"
+
 	"github.com/fatih/color"
 )
 
@@ -22,13 +24,13 @@ var (
 	Info    = color.New(color.FgCyan)
 
 	// 文本样式
-	Bold  = color.New(color.Bold)
-	Dim   = color.New(color.Faint)
+	Bold   = color.New(color.Bold)
+	Dim    = color.New(color.Faint)
 	Italic = color.New(color.Italic)
 
 	// 特殊颜色
-	Tool     = color.New(color.FgYellow)
-	User     = color.New(color.FgCyan, color.Bold)
+	Tool      = color.New(color.FgYellow)
+	User      = color.New(color.FgCyan, color.Bold)
 	Assistant = color.New(color.FgGreen)
 )
 
@@ -221,8 +223,5 @@ func MoveDown(n int) {
 func truncate(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
+	return textutil.TruncateWithEllipsis(s, maxLen)
 }

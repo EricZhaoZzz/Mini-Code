@@ -54,6 +54,14 @@ func (r *Runner) Start(ctx context.Context) error {
 	// 初始化命令处理器
 	r.cmdHandler = NewCommandHandler(r.orch, r.memStore)
 
+	// 注册命令菜单（让用户在客户端看到可用命令）
+	if err := r.channel.RegisterCommands(); err != nil {
+		// 注册失败不阻止启动，只打印警告
+		fmt.Printf("⚠️ 注册命令菜单失败: %v\n", err)
+	} else {
+		fmt.Println("✅ 已注册命令菜单")
+	}
+
 	// 启动消息处理循环
 	go r.processMessages(ctx)
 
@@ -111,10 +119,12 @@ func (r *Runner) handleMessage(ctx context.Context, msg channel.IncomingMessage)
 			session.Cancel()
 		}
 		if cmdResult.Response != "" {
-			r.channel.Send(channel.OutgoingMessage{
+			if _, err := r.channel.Send(channel.OutgoingMessage{
 				ChatID: msg.ChannelID,
 				Text:   cmdResult.Response,
-			})
+			}); err != nil {
+				fmt.Printf("❌ 发送命令响应失败: %v\n", err)
+			}
 		}
 		return
 	}
