@@ -24,15 +24,39 @@ func main() {
 	loadDotEnv(".env")
 
 	// 读取配置
-	apiKey := os.Getenv("API_KEY")
-	baseURL := os.Getenv("BASE_URL")
+	pieAppID := os.Getenv("PIE_APP_ID")
+	pieAppSecret := os.Getenv("PIE_APP_SECRET")
+	pieGatewayPath := os.Getenv("PIE_GATEWAY_PATH")
 	modelID := os.Getenv("MODEL")
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	allowedUsersStr := os.Getenv("TELEGRAM_ALLOWED_USERS")
 
-	if apiKey == "" || baseURL == "" || modelID == "" {
-		ui.PrintError("缺少必要环境变量 API_KEY / BASE_URL / MODEL")
-		os.Exit(1)
+	var p provider.Provider
+	if pieAppID != "" && pieAppSecret != "" && pieGatewayPath != "" {
+		if modelID == "" {
+			modelID = "deepseek-v3-2"
+		}
+		p = provider.NewPieGatewayProvider(provider.PieGatewayConfig{
+			AppID:       pieAppID,
+			AppSecret:   pieAppSecret,
+			GatewayPath: pieGatewayPath,
+			Model:       modelID,
+		})
+		tools.SetWebSearchConfig(&tools.WebSearchConfig{
+			AppID:       pieAppID,
+			AppSecret:   pieAppSecret,
+			GatewayPath: pieGatewayPath,
+		})
+	} else {
+		apiKey := os.Getenv("API_KEY")
+		baseURL := os.Getenv("BASE_URL")
+		if apiKey == "" || baseURL == "" || modelID == "" {
+			ui.PrintError("缺少必要环境变量: 请配置 PIE_APP_ID/PIE_APP_SECRET/PIE_GATEWAY_PATH 或 API_KEY/BASE_URL/MODEL")
+			os.Exit(1)
+		}
+		cfg := openai.DefaultConfig(apiKey)
+		cfg.BaseURL = baseURL
+		p = provider.NewOpenAIProvider(cfg, modelID)
 	}
 
 	if botToken == "" {
@@ -40,7 +64,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 解析允许的用户列表
 	var allowedUsers []int64
 	if allowedUsersStr != "" {
 		for _, uidStr := range strings.Split(allowedUsersStr, ",") {
@@ -56,11 +79,6 @@ func main() {
 			allowedUsers = append(allowedUsers, uid)
 		}
 	}
-
-	// 创建 Provider
-	cfg := openai.DefaultConfig(apiKey)
-	cfg.BaseURL = baseURL
-	p := provider.NewOpenAIProvider(cfg, modelID)
 
 	// 初始化 Memory Store
 	homeDir, _ := os.UserHomeDir()

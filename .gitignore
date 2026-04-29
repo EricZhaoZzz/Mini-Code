@@ -35,3 +35,6 @@ vendor/
 Thumbs.db
 .mini-code-history
 superpowers/
+
+.piebox
+.pieconfig

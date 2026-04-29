@@ -29,6 +29,7 @@ func init() {
 
 	// 网络操作
 	register("download_file", "下载远程文件到本地", DownloadFileArguments{}, DownloadFile)
+	register("web_search", "搜索互联网获取实时信息", WebSearchArguments{}, WebSearch)
 
 	// Git 操作
 	register("git_status", "查看 Git 仓库状态", GitStatusArguments{}, GitStatus)

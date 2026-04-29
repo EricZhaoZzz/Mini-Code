@@ -23,6 +23,7 @@ var ToolNames = map[string]string{
 	"search_in_files": "搜索文件",
 	"run_shell":       "执行命令",
 	"replace_in_file": "替换内容",
+	"web_search":      "网页搜索",
 }
 
 // ToolIcons 工具图标映射
@@ -33,6 +34,7 @@ var ToolIcons = map[string]string{
 	"search_in_files": "🔍",
 	"run_shell":       "💻",
 	"replace_in_file": "✏️",
+	"web_search":      "🌐",
 }
 
 // StartToolCall 开始显示工具调用

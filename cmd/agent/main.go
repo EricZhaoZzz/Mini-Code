@@ -301,11 +301,36 @@ func runSupervisor() error {
 func runWorker(options workerOptions) error {
 	loadDotEnv(".env")
 
-	apiKey := os.Getenv("API_KEY")
-	baseURL := os.Getenv("BASE_URL")
+	pieAppID := os.Getenv("PIE_APP_ID")
+	pieAppSecret := os.Getenv("PIE_APP_SECRET")
+	pieGatewayPath := os.Getenv("PIE_GATEWAY_PATH")
 	modelID := os.Getenv("MODEL")
-	if apiKey == "" || baseURL == "" || modelID == "" {
-		return fmt.Errorf("缺少必要环境变量 API_KEY / BASE_URL / MODEL")
+
+	var p provider.Provider
+	if pieAppID != "" && pieAppSecret != "" && pieGatewayPath != "" {
+		if modelID == "" {
+			modelID = "deepseek-v3-2"
+		}
+		p = provider.NewPieGatewayProvider(provider.PieGatewayConfig{
+			AppID:       pieAppID,
+			AppSecret:   pieAppSecret,
+			GatewayPath: pieGatewayPath,
+			Model:       modelID,
+		})
+		tools.SetWebSearchConfig(&tools.WebSearchConfig{
+			AppID:       pieAppID,
+			AppSecret:   pieAppSecret,
+			GatewayPath: pieGatewayPath,
+		})
+	} else {
+		apiKey := os.Getenv("API_KEY")
+		baseURL := os.Getenv("BASE_URL")
+		if apiKey == "" || baseURL == "" || modelID == "" {
+			return fmt.Errorf("缺少必要环境变量: 请配置 PIE_APP_ID/PIE_APP_SECRET/PIE_GATEWAY_PATH 或 API_KEY/BASE_URL/MODEL")
+		}
+		cfg := openai.DefaultConfig(apiKey)
+		cfg.BaseURL = baseURL
+		p = provider.NewOpenAIProvider(cfg, modelID)
 	}
 
 	var control *workerControl
@@ -317,10 +342,6 @@ func runWorker(options workerOptions) error {
 		defer client.Close()
 		control = &workerControl{client: client}
 	}
-
-	cfg := openai.DefaultConfig(apiKey)
-	cfg.BaseURL = baseURL
-	p := provider.NewOpenAIProvider(cfg, modelID)
 
 	homeDir, _ := os.UserHomeDir()
 	globalDBPath := filepath.Join(homeDir, ".mini-code", "memory.db")

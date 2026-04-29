@@ -4,7 +4,7 @@ import "mini-code/pkg/provider"
 
 var researcherTools = []string{
 	"read_file", "list_files", "search_in_files",
-	"download_file", "run_shell",
+	"download_file", "run_shell", "web_search",
 	"recall", "remember",
 }
 
