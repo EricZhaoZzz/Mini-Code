@@ -17,8 +17,8 @@ const defaultExaEndpoint = "https://mcp.exa.ai/mcp"
 type WebSearchArguments struct {
 	Query      string `json:"query" validate:"required" jsonschema:"required" jsonschema_description:"搜索关键词"`
 	MaxResults int    `json:"max_results" jsonschema_description:"读取内容的结果数量，默认 3，最大 10"`
-	Language   string `json:"language" jsonschema_description:"语言代码（当前后端忽略此参数）"`
-	Country    string `json:"country" jsonschema_description:"国家代码（当前后端忽略此参数）"`
+	Language   string `json:"language" jsonschema_description:"语言代码（保留以向后兼容，当前 Exa 后端忽略此参数）"`
+	Country    string `json:"country" jsonschema_description:"国家代码（保留以向后兼容，当前 Exa 后端忽略此参数）"`
 }
 
 type webSearchResult struct {
@@ -30,15 +30,14 @@ type webSearchResult struct {
 type webSearchOrganic struct {
 	Title   string `json:"title"`
 	Link    string `json:"link"`
-	Snippet string `json:"snippet"`
+	Snippet string `json:"snippet,omitempty"`
 	Content string `json:"content,omitempty"`
 }
 
-// SearchHit is a backend-agnostic single search result.
-type SearchHit struct {
+// searchHit is a backend-agnostic single search result.
+type searchHit struct {
 	Title   string
 	Link    string
-	Snippet string
 	Content string
 }
 
@@ -76,14 +75,13 @@ func WebSearch(args interface{}) (interface{}, error) {
 		result.Results = append(result.Results, webSearchOrganic{
 			Title:   h.Title,
 			Link:    h.Link,
-			Snippet: h.Snippet,
 			Content: h.Content,
 		})
 	}
 	return result, nil
 }
 
-func exaSearch(ctx context.Context, endpoint, query string, maxResults int) ([]SearchHit, error) {
+func exaSearch(ctx context.Context, endpoint, query string, maxResults int) ([]searchHit, error) {
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -128,7 +126,7 @@ func exaSearch(ctx context.Context, endpoint, query string, maxResults int) ([]S
 }
 
 // parseExaResponse parses the Exa MCP SSE response text and returns up to maxResults hits.
-func parseExaResponse(raw string, maxResults int) ([]SearchHit, error) {
+func parseExaResponse(raw string, maxResults int) ([]searchHit, error) {
 	var texts []string
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
@@ -174,9 +172,9 @@ func parseExaResponse(raw string, maxResults int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-// parseExaChunks splits the text by \n\n and parses each block into a SearchHit.
-func parseExaChunks(text string) []SearchHit {
-	var hits []SearchHit
+// parseExaChunks splits the text by \n\n and parses each block into a searchHit.
+func parseExaChunks(text string) []searchHit {
+	var hits []searchHit
 	for _, chunk := range strings.Split(text, "\n\n") {
 		if strings.TrimSpace(chunk) == "" {
 			continue
@@ -210,7 +208,7 @@ func parseExaChunks(text string) []SearchHit {
 		if title == "" && link == "" && content == "" {
 			continue
 		}
-		hits = append(hits, SearchHit{
+		hits = append(hits, searchHit{
 			Title:   title,
 			Link:    link,
 			Content: truncate(content, 2000),

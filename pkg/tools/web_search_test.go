@@ -142,6 +142,26 @@ func TestWebSearch_HTTPError(t *testing.T) {
 	}
 }
 
+func TestParseExaResponse_PlainTextFallback(t *testing.T) {
+	raw := "Title: Plain Result\nURL: https://example.com\nHighlights:\nSome body text."
+	hits, err := parseExaResponse(raw, 5)
+	if err != nil {
+		t.Fatalf("parseExaResponse fallback failed: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %d", len(hits))
+	}
+	if hits[0].Title != "Plain Result" {
+		t.Fatalf("unexpected title: %q", hits[0].Title)
+	}
+	if hits[0].Link != "https://example.com" {
+		t.Fatalf("unexpected link: %q", hits[0].Link)
+	}
+	if hits[0].Content != "Some body text." {
+		t.Fatalf("unexpected content: %q", hits[0].Content)
+	}
+}
+
 func TestWebSearch_ToolRegistered(t *testing.T) {
 	found := false
 	for _, def := range Definitions {
