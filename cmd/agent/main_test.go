@@ -88,7 +88,7 @@ func TestHandleBuiltinCommand_Clear(t *testing.T) {
 // TestHandleBuiltinCommand_Reset 测试 reset 命令
 func TestHandleBuiltinCommand_Reset(t *testing.T) {
 	orch := orchestrator.New(nil)
-	
+
 	// 先添加一些消息到 session
 	session := orch.GetOrCreateSession("cli", "test")
 	session.AppendUserMessage("test message 1")
@@ -176,8 +176,8 @@ func TestHandleBuiltinCommand_Unknown(t *testing.T) {
 	}{
 		{"empty", ""},
 		{"random", "randomcommand"},
-		{"partial", "hel"},   // 不是完整的 help
-		{"partial2", "rese"}, // 不是完整的 reset
+		{"partial", "hel"},         // 不是完整的 help
+		{"partial2", "rese"},       // 不是完整的 reset
 		{"with spaces", "help me"}, // 带空格的命令
 		{"number", "123"},
 	}

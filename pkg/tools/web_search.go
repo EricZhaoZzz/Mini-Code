@@ -6,29 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mini-code/pkg/provider"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-type WebSearchConfig struct {
-	AppID       string
-	AppSecret   string
-	GatewayPath string
-}
-
-var globalWebSearchConfig *WebSearchConfig
-
-func SetWebSearchConfig(cfg *WebSearchConfig) {
-	globalWebSearchConfig = cfg
-}
+const defaultExaEndpoint = "https://mcp.exa.ai/mcp"
 
 type WebSearchArguments struct {
 	Query      string `json:"query" validate:"required" jsonschema:"required" jsonschema_description:"搜索关键词"`
 	MaxResults int    `json:"max_results" jsonschema_description:"读取内容的结果数量，默认 3，最大 10"`
-	Language   string `json:"language" jsonschema_description:"语言代码，如 en, zh-cn，默认 en"`
-	Country    string `json:"country" jsonschema_description:"国家代码，如 us, cn，默认 us"`
+	Language   string `json:"language" jsonschema_description:"语言代码（当前后端忽略此参数）"`
+	Country    string `json:"country" jsonschema_description:"国家代码（当前后端忽略此参数）"`
 }
 
 type webSearchResult struct {
@@ -44,17 +34,27 @@ type webSearchOrganic struct {
 	Content string `json:"content,omitempty"`
 }
 
+// SearchHit is a backend-agnostic single search result.
+type SearchHit struct {
+	Title   string
+	Link    string
+	Snippet string
+	Content string
+}
+
+func exaEndpoint() string {
+	if v := strings.TrimSpace(os.Getenv("EXA_MCP_URL")); v != "" {
+		return v
+	}
+	return defaultExaEndpoint
+}
+
 func WebSearch(args interface{}) (interface{}, error) {
 	var params WebSearchArguments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
 	}
 
-	if globalWebSearchConfig == nil {
-		return nil, fmt.Errorf("web_search 未配置：需要设置 PIE_APP_ID / PIE_APP_SECRET / PIE_GATEWAY_PATH")
-	}
-
-	cfg := globalWebSearchConfig
 	maxResults := params.MaxResults
 	if maxResults <= 0 {
 		maxResults = 3
@@ -63,49 +63,52 @@ func WebSearch(args interface{}) (interface{}, error) {
 		maxResults = 10
 	}
 
-	lang := params.Language
-	if lang == "" {
-		lang = "en"
-	}
-	country := params.Country
-	if country == "" {
-		country = "us"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	hits, err := exaSearch(ctx, exaEndpoint(), params.Query, maxResults)
+	if err != nil {
+		return nil, err
 	}
 
+	result := webSearchResult{Query: params.Query}
+	for _, h := range hits {
+		result.Results = append(result.Results, webSearchOrganic{
+			Title:   h.Title,
+			Link:    h.Link,
+			Snippet: h.Snippet,
+			Content: h.Content,
+		})
+	}
+	return result, nil
+}
+
+func exaSearch(ctx context.Context, endpoint, query string, maxResults int) ([]SearchHit, error) {
 	reqBody := map[string]interface{}{
-		"q":           params.Query,
-		"max_results": maxResults,
-		"hl":          lang,
-		"gl":          country,
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name": "web_search_exa",
+			"arguments": map[string]interface{}{
+				"query":      query,
+				"type":       "auto",
+				"numResults": maxResults,
+				"livecrawl":  "fallback",
+			},
+		},
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	apiPath := "/v2/extend/web/serper/search"
-	fullURL := strings.TrimRight(cfg.GatewayPath, "/") + apiPath
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	timestamp := time.Now().Unix()
-	nonce, err := provider.GenerateNonce()
-	if err != nil {
-		return nil, fmt.Errorf("生成 nonce 失败: %w", err)
-	}
-	signature := provider.ComputeHMACSignature("POST", apiPath, timestamp, nonce, cfg.AppID, cfg.AppSecret)
-
-	req.Header.Set("X-App-Id", cfg.AppID)
-	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", timestamp))
-	req.Header.Set("X-Nonce", nonce)
-	req.Header.Set("Authorization", "HMAC-SHA256 "+signature)
+	req.Header.Set("accept", "application/json, text/event-stream")
+	req.Header.Set("content-type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -117,44 +120,103 @@ func WebSearch(args interface{}) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %w", err)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("搜索失败: HTTP %d, body: %s", resp.StatusCode, truncate(string(respBody), 500))
 	}
 
-	var serperResp struct {
-		Organic []struct {
-			Title   string `json:"title"`
-			Link    string `json:"link"`
-			Snippet string `json:"snippet"`
-			Content *struct {
-				Text     string `json:"text"`
-				Markdown string `json:"markdown"`
-			} `json:"content"`
-		} `json:"organic"`
-	}
-	if err := json.Unmarshal(respBody, &serperResp); err != nil {
-		return nil, fmt.Errorf("解析搜索结果失败: %w", err)
-	}
+	return parseExaResponse(string(respBody), maxResults)
+}
 
-	result := webSearchResult{Query: params.Query}
-	for _, item := range serperResp.Organic {
-		organic := webSearchOrganic{
-			Title:   item.Title,
-			Link:    item.Link,
-			Snippet: item.Snippet,
+// parseExaResponse parses the Exa MCP SSE response text and returns up to maxResults hits.
+func parseExaResponse(raw string, maxResults int) ([]SearchHit, error) {
+	var texts []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
 		}
-		if item.Content != nil {
-			if item.Content.Markdown != "" {
-				organic.Content = truncate(item.Content.Markdown, 2000)
-			} else if item.Content.Text != "" {
-				organic.Content = truncate(item.Content.Text, 2000)
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var msg struct {
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+			continue
+		}
+		for _, c := range msg.Result.Content {
+			if strings.TrimSpace(c.Text) != "" {
+				texts = append(texts, c.Text)
 			}
 		}
-		result.Results = append(result.Results, organic)
 	}
 
-	return result, nil
+	// Fallback: response is not SSE but already the raw text-block format.
+	if len(texts) == 0 && strings.Contains(raw, "Title:") {
+		texts = append(texts, raw)
+	}
+	if len(texts) == 0 {
+		return nil, fmt.Errorf("Exa 搜索无可解析内容（响应可能为空或格式异常）")
+	}
+
+	hits := parseExaChunks(strings.Join(texts, "\n\n"))
+	if len(hits) == 0 {
+		return nil, fmt.Errorf("Exa 搜索结果解析为空")
+	}
+	if len(hits) > maxResults {
+		hits = hits[:maxResults]
+	}
+	return hits, nil
+}
+
+// parseExaChunks splits the text by \n\n and parses each block into a SearchHit.
+func parseExaChunks(text string) []SearchHit {
+	var hits []SearchHit
+	for _, chunk := range strings.Split(text, "\n\n") {
+		if strings.TrimSpace(chunk) == "" {
+			continue
+		}
+		lines := strings.Split(chunk, "\n")
+		var title, link string
+		urlIdx, bodyIdx := -1, -1
+		for i, ln := range lines {
+			switch {
+			case strings.HasPrefix(ln, "Title:"):
+				title = strings.TrimSpace(strings.TrimPrefix(ln, "Title:"))
+			case strings.HasPrefix(ln, "URL:") && urlIdx == -1:
+				link = strings.TrimSpace(strings.TrimPrefix(ln, "URL:"))
+				urlIdx = i
+			case (strings.HasPrefix(ln, "Highlights:") || strings.HasPrefix(ln, "Text:")) && bodyIdx == -1:
+				bodyIdx = i
+			}
+		}
+
+		var content string
+		if bodyIdx != -1 {
+			first := lines[bodyIdx]
+			first = strings.TrimPrefix(first, "Highlights:")
+			first = strings.TrimPrefix(first, "Text:")
+			parts := append([]string{strings.TrimSpace(first)}, lines[bodyIdx+1:]...)
+			content = strings.TrimSpace(strings.Join(parts, "\n"))
+		} else if urlIdx != -1 && urlIdx+1 < len(lines) {
+			content = strings.TrimSpace(strings.Join(lines[urlIdx+1:], "\n"))
+		}
+
+		if title == "" && link == "" && content == "" {
+			continue
+		}
+		hits = append(hits, SearchHit{
+			Title:   title,
+			Link:    link,
+			Content: truncate(content, 2000),
+		})
+	}
+	return hits
 }
 
 func truncate(s string, maxLen int) string {

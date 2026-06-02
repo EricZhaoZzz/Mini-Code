@@ -1,107 +1,131 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
-func TestWebSearch_MissingConfig(t *testing.T) {
-	old := globalWebSearchConfig
-	globalWebSearchConfig = nil
-	defer func() { globalWebSearchConfig = old }()
+func readFixture(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/exa_mcp_response.txt")
+	if err != nil {
+		t.Fatalf("读取夹具失败: %v", err)
+	}
+	return string(raw)
+}
 
-	_, err := WebSearch(`{"query":"test"}`)
-	if err == nil {
-		t.Fatal("expected error when config is nil")
+func TestParseExaResponse_Fixture(t *testing.T) {
+	hits, err := parseExaResponse(readFixture(t), 10)
+	if err != nil {
+		t.Fatalf("parseExaResponse failed: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 hits, got %d", len(hits))
+	}
+	if hits[0].Title != "Go Concurrency Patterns: Context" {
+		t.Fatalf("unexpected title[0]: %q", hits[0].Title)
+	}
+	if hits[0].Link != "https://go.dev/blog/context" {
+		t.Fatalf("unexpected link[0]: %q", hits[0].Link)
+	}
+	if !strings.Contains(hits[0].Content, "In Go servers") || !strings.Contains(hits[0].Content, "When a request") {
+		t.Fatalf("content[0] missing body lines: %q", hits[0].Content)
+	}
+	if strings.Contains(hits[0].Content, "Published") || strings.Contains(hits[0].Content, "Author") {
+		t.Fatalf("content[0] should not include metadata lines: %q", hits[0].Content)
+	}
+	if hits[1].Title != "Context package - Go" {
+		t.Fatalf("unexpected title[1]: %q", hits[1].Title)
+	}
+	if hits[1].Content != "Package context defines the Context type." {
+		t.Fatalf("unexpected content[1]: %q", hits[1].Content)
 	}
 }
 
-func TestWebSearch_Success(t *testing.T) {
+func TestParseExaResponse_Truncate(t *testing.T) {
+	hits, err := parseExaResponse(readFixture(t), 1)
+	if err != nil {
+		t.Fatalf("parseExaResponse failed: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %d", len(hits))
+	}
+}
+
+func TestParseExaResponse_Empty(t *testing.T) {
+	if _, err := parseExaResponse("", 3); err == nil {
+		t.Fatal("expected error on empty response")
+	}
+}
+
+func TestExaSearch_RequestAndParse(t *testing.T) {
+	var captured map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Fatalf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/v2/extend/web/serper/search" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Header.Get("X-App-Id") != "app_test" {
-			t.Fatalf("missing or wrong X-App-Id: %s", r.Header.Get("X-App-Id"))
-		}
-		if r.Header.Get("Authorization") == "" {
-			t.Fatal("missing Authorization header")
-		}
-
 		body, _ := io.ReadAll(r.Body)
-		var reqBody map[string]interface{}
-		json.Unmarshal(body, &reqBody)
-		if reqBody["q"] != "golang testing" {
-			t.Fatalf("unexpected query: %v", reqBody["q"])
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"organic": []map[string]interface{}{
-				{
-					"title":   "Go Testing",
-					"link":    "https://example.com/go-testing",
-					"snippet": "Learn Go testing...",
-					"content": map[string]string{
-						"text":     "Full content here",
-						"markdown": "# Go Testing\nFull content here",
-					},
-				},
-				{
-					"title":   "Second Result",
-					"link":    "https://example.com/second",
-					"snippet": "Another result",
-				},
-			},
-		})
+		json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(readFixture(t)))
 	}))
 	defer server.Close()
 
-	old := globalWebSearchConfig
-	globalWebSearchConfig = &WebSearchConfig{
-		AppID:       "app_test",
-		AppSecret:   "sk_test_secret",
-		GatewayPath: server.URL,
+	hits, err := exaSearch(context.Background(), server.URL, "go context", 5)
+	if err != nil {
+		t.Fatalf("exaSearch failed: %v", err)
 	}
-	defer func() { globalWebSearchConfig = old }()
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 hits, got %d", len(hits))
+	}
+	params, _ := captured["params"].(map[string]interface{})
+	if params["name"] != "web_search_exa" {
+		t.Fatalf("unexpected tool name: %v", params["name"])
+	}
+	argsm, _ := params["arguments"].(map[string]interface{})
+	if argsm["query"] != "go context" {
+		t.Fatalf("unexpected query: %v", argsm["query"])
+	}
+	if argsm["numResults"] != float64(5) {
+		t.Fatalf("expected numResults=5, got %v", argsm["numResults"])
+	}
+}
 
-	result, err := WebSearch(`{"query":"golang testing","max_results":2}`)
+func TestWebSearch_ExaEndToEnd(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(readFixture(t)))
+	}))
+	defer server.Close()
+	t.Setenv("EXA_MCP_URL", server.URL)
+
+	result, err := WebSearch(`{"query":"go context","max_results":5}`)
 	if err != nil {
 		t.Fatalf("WebSearch failed: %v", err)
 	}
-
 	data, _ := json.Marshal(result)
 	var parsed struct {
 		Query   string `json:"query"`
 		Results []struct {
 			Title   string `json:"title"`
 			Link    string `json:"link"`
-			Snippet string `json:"snippet"`
 			Content string `json:"content"`
 		} `json:"results"`
 	}
 	json.Unmarshal(data, &parsed)
-
-	if parsed.Query != "golang testing" {
-		t.Fatalf("expected query=golang testing, got %s", parsed.Query)
+	if parsed.Query != "go context" {
+		t.Fatalf("unexpected query: %s", parsed.Query)
 	}
 	if len(parsed.Results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(parsed.Results))
 	}
-	if parsed.Results[0].Title != "Go Testing" {
-		t.Fatalf("unexpected first result title: %s", parsed.Results[0].Title)
-	}
-	if parsed.Results[0].Content == "" {
-		t.Fatal("expected content in first result")
-	}
-	if parsed.Results[1].Content != "" {
-		t.Fatal("expected no content in second result (no content field in response)")
+	if parsed.Results[0].Title != "Go Concurrency Patterns: Context" {
+		t.Fatalf("unexpected first title: %s", parsed.Results[0].Title)
 	}
 }
 
@@ -111,49 +135,10 @@ func TestWebSearch_HTTPError(t *testing.T) {
 		w.Write([]byte("internal error"))
 	}))
 	defer server.Close()
+	t.Setenv("EXA_MCP_URL", server.URL)
 
-	old := globalWebSearchConfig
-	globalWebSearchConfig = &WebSearchConfig{
-		AppID:       "app_test",
-		AppSecret:   "sk_test_secret",
-		GatewayPath: server.URL,
-	}
-	defer func() { globalWebSearchConfig = old }()
-
-	_, err := WebSearch(`{"query":"test"}`)
-	if err == nil {
+	if _, err := WebSearch(`{"query":"test"}`); err == nil {
 		t.Fatal("expected error on HTTP 500")
-	}
-}
-
-func TestWebSearch_DefaultParams(t *testing.T) {
-	var capturedBody map[string]interface{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &capturedBody)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"organic": []interface{}{}})
-	}))
-	defer server.Close()
-
-	old := globalWebSearchConfig
-	globalWebSearchConfig = &WebSearchConfig{
-		AppID:       "app_test",
-		AppSecret:   "sk_test_secret",
-		GatewayPath: server.URL,
-	}
-	defer func() { globalWebSearchConfig = old }()
-
-	WebSearch(`{"query":"test"}`)
-
-	if capturedBody["max_results"] != float64(3) {
-		t.Fatalf("expected default max_results=3, got %v", capturedBody["max_results"])
-	}
-	if capturedBody["hl"] != "en" {
-		t.Fatalf("expected default hl=en, got %v", capturedBody["hl"])
-	}
-	if capturedBody["gl"] != "us" {
-		t.Fatalf("expected default gl=us, got %v", capturedBody["gl"])
 	}
 }
 
@@ -195,7 +180,6 @@ func TestWebSearch_ToolRegistered(t *testing.T) {
 	if !found {
 		t.Fatal("web_search not found in Definitions")
 	}
-
 	if _, ok := Executors["web_search"]; !ok {
 		t.Fatal("web_search not found in Executors")
 	}
