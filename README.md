@@ -31,6 +31,7 @@
 | **Shell 命令** | ✅ | 执行系统命令，支持 Windows/Unix |
 | **Git 操作** | ✅ | status、diff、log 查看 |
 | **网络下载** | ✅ | 下载远程文件到本地 |
+| **网页搜索** | ✅ | 免费 Exa MCP 端点，开箱即用，无需 API key |
 | **长期记忆** | ✅ | 三级记忆存储（project/user/global），FTS5 全文检索 |
 | **Agent 专化** | ✅ | CoderAgent、ReviewerAgent、ResearcherAgent 三类专化 Agent |
 | **Telegram Bot** | ✅ | Telegram 频道支持，流式消息更新，命令处理 |
@@ -175,6 +176,7 @@ Mini-Code 提供以下工具供 AI 助手使用：
 | 工具 | 描述 |
 |------|------|
 | `download_file` | 下载远程文件到本地（支持超时设置） |
+| `web_search` | 网页搜索（使用免费 Exa MCP 端点 `https://mcp.exa.ai/mcp`，无需 API key，可通过 `EXA_MCP_URL` 覆盖） |
 
 ### Shell 命令
 

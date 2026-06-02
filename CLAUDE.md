@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目简介
 
-Mini-Code 是一个基于 Go 的本地 AI 编程助手，通过 OpenAI 兼容接口与 LLM 交互。提供两种运行形态：CLI（`cmd/agent`，含监督器/Worker 分进程热重启机制）与 Telegram Bot（`cmd/telegram`）。内置 19 个工具（文件 / Shell / Git / 记忆 / 子 Agent 调度）。
+Mini-Code 是一个基于 Go 的本地 AI 编程助手，通过 OpenAI 兼容接口与 LLM 交互。提供两种运行形态：CLI（`cmd/agent`，含监督器/Worker 分进程热重启机制）与 Telegram Bot（`cmd/telegram`）。内置 20 个工具（文件 / Shell / Git / 记忆 / 网页搜索 / 子 Agent 调度）。
 
 Go 模块路径为 `mini-code`，包导入形如 `mini-code/pkg/agent`（非 `github.com/...`）。
 
@@ -44,6 +44,7 @@ LM_LOG_LEVEL=normal    # minimal|normal|verbose（控制 helpers.go 中的 curre
 LM_VERBOSE=1           # 在 BaseAgent 上启用 verbose 模式（独立于 LM_LOG_LEVEL）
 LM_DEBUG=true          # 调试日志写入 lm_debug.log
 LM_MAX_TURNS=50        # 单次任务最大工具轮次（0=不限）
+EXA_MCP_URL=           # 可选：覆盖 Exa 免费搜索端点（默认 https://mcp.exa.ai/mcp，无需 API key）
 
 # Telegram（仅 cmd/telegram 使用）
 TELEGRAM_BOT_TOKEN=...

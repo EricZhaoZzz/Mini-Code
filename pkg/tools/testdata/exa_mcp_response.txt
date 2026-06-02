@@ -1,0 +1,3 @@
+event: message
+data: {"result":{"content":[{"type":"text","text":"Title: Go Concurrency Patterns: Context\nURL: https://go.dev/blog/context\nPublished: 2014-07-29\nAuthor: Sameer Ajmani\nHighlights:\nIn Go servers, each incoming request is handled in its own goroutine.\nWhen a request is canceled, all goroutines should exit quickly.\n\nTitle: Context package - Go\nURL: https://pkg.go.dev/context\nHighlights:\nPackage context defines the Context type."}]}}
+

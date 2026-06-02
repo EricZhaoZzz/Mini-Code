@@ -42,11 +42,6 @@ func main() {
 			GatewayPath: pieGatewayPath,
 			Model:       modelID,
 		})
-		tools.SetWebSearchConfig(&tools.WebSearchConfig{
-			AppID:       pieAppID,
-			AppSecret:   pieAppSecret,
-			GatewayPath: pieGatewayPath,
-		})
 	} else {
 		apiKey := os.Getenv("API_KEY")
 		baseURL := os.Getenv("BASE_URL")
