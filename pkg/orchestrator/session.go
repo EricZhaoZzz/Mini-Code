@@ -117,6 +117,16 @@ func (s *Session) MessageCount() int {
 	return len(s.messages)
 }
 
+// LastSeen 返回最后活跃时间。
+//
+// 必须通过它访问 lastSeen：后台 evict 循环会读该字段，
+// 直接访问会与 AppendUserMessage / AppendMessages 的写产生数据竞争。
+func (s *Session) LastSeen() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSeen
+}
+
 // UpdateSystemPrompt 更新系统提示
 func (s *Session) UpdateSystemPrompt(prompt string) {
 	s.mu.Lock()

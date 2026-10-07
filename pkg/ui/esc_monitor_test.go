@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -61,9 +62,11 @@ func TestEscMonitor_StartStop(t *testing.T) {
 
 func TestEscMonitor_DoubleEscTrigger(t *testing.T) {
 	m := NewEscMonitor()
-	cancelCalled := false
+	// cancel 在 goroutine 中被调用，必须用原子变量同步，
+	// 否则 go test -race 会报 DATA RACE（time.Sleep 不建立 happens-before）
+	var cancelCalled atomic.Bool
 	m.SetCancelFunc(func() {
-		cancelCalled = true
+		cancelCalled.Store(true)
 	})
 
 	// 启用监控
@@ -89,7 +92,7 @@ func TestEscMonitor_DoubleEscTrigger(t *testing.T) {
 
 	// cancel 函数在 goroutine 中调用，等待一下
 	time.Sleep(10 * time.Millisecond)
-	if !cancelCalled {
+	if !cancelCalled.Load() {
 		t.Error("cancel function should have been called")
 	}
 }

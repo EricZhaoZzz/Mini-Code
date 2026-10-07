@@ -45,6 +45,10 @@ type Orchestrator struct {
 	memStore *memory.Store
 	router   *Router
 	restart  RestartRuntime
+
+	// stopCh 用于关闭后台 evictLoop；closeOnce 保证 Close 幂等
+	stopCh    chan struct{}
+	closeOnce sync.Once
 }
 
 // New 创建新的 Orchestrator
@@ -53,9 +57,17 @@ func New(memStore *memory.Store) *Orchestrator {
 		sessions: make(map[string]*Session),
 		memStore: memStore,
 		router:   NewRouter(),
+		stopCh:   make(chan struct{}),
 	}
 	go o.evictLoop() // 后台清理不活跃 Session
 	return o
+}
+
+// Close 停止后台 goroutine。幂等，可重复调用。
+func (o *Orchestrator) Close() {
+	o.closeOnce.Do(func() {
+		close(o.stopCh)
+	})
 }
 
 // GetOrCreateSession 获取或创建 Session
@@ -155,14 +167,30 @@ func (o *Orchestrator) handleCLI(ctx context.Context, session *Session, agnt age
 func (o *Orchestrator) evictLoop() {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
-	for range ticker.C {
-		o.mu.Lock()
-		for key, s := range o.sessions {
-			if time.Since(s.lastSeen) > 24*time.Hour {
-				delete(o.sessions, key)
-			}
+	for {
+		select {
+		case <-o.stopCh:
+			return
+		case <-ticker.C:
+			o.evictStaleSessions()
 		}
-		o.mu.Unlock()
+	}
+}
+
+// evictStaleSessions 清理过期 Session。
+//
+// 注意：读 s.lastSeen 必须走加锁的 LastSeen()。直接访问字段会与
+// AppendUserMessage 的写产生数据竞争（go test -race 实测复现）。
+func (o *Orchestrator) evictStaleSessions() {
+	const staleAfter = 24 * time.Hour
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	for key, s := range o.sessions {
+		if time.Since(s.LastSeen()) > staleAfter {
+			delete(o.sessions, key)
+		}
 	}
 }
 

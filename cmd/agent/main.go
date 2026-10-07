@@ -372,6 +372,7 @@ func runWorker(options workerOptions) error {
 
 	cliCh := cli.New(rl)
 	orch := orchestrator.New(memStore)
+	defer orch.Close() // 停止后台 Session 清理协程
 
 	if options.snapshotPath != "" {
 		snapshot, err := loadSessionSnapshot(options.snapshotPath)
