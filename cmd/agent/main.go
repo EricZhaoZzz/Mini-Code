@@ -301,6 +301,12 @@ func runSupervisor() error {
 func runWorker(options workerOptions) error {
 	loadDotEnv(".env")
 
+	// 固定工作区根目录：所有文件工具的安全边界都基于它，
+	// 必须在任何 chdir 发生前确定，否则边界会随 CWD 静默漂移。
+	if err := tools.SetWorkspaceRoot("."); err != nil {
+		return fmt.Errorf("设置工作区根目录失败: %w", err)
+	}
+
 	pieAppID := os.Getenv("PIE_APP_ID")
 	pieAppSecret := os.Getenv("PIE_APP_SECRET")
 	pieGatewayPath := os.Getenv("PIE_GATEWAY_PATH")

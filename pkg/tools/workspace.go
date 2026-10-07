@@ -5,21 +5,70 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
-func workspaceRoot() (string, error) {
-	root, err := os.Getwd()
+var (
+	// rootOnce 保证根目录只解析一次
+	rootOnce sync.Once
+	// fixedRoot 是显式设置的工作区根目录（优先于 CWD）
+	fixedRoot string
+	// rootErr 记录首次解析时的错误
+	rootErr error
+)
 
+// SetWorkspaceRoot 显式固定工作区根目录。
+//
+// 必须在进程启动时调用一次（cmd/agent 已接入）。不调用时退化为
+// 「首次调用时的 os.Getwd()」。
+//
+// 为什么要固定：workspaceRoot 决定所有文件工具的安全边界，
+// 若每次都取 os.Getwd()，任何 chdir（子进程、或库内部行为）都会
+// 静默移动边界——实测 chdir 到用户主目录后「工作区」就变成了主目录。
+func SetWorkspaceRoot(root string) error {
+	trimmed := strings.TrimSpace(root)
+	if trimmed == "" {
+		return fmt.Errorf("工作区根目录不能为空")
+	}
+
+	abs, err := filepath.Abs(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("获取工作区失败: %w", err)
+		return fmt.Errorf("解析工作区路径失败: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
 	}
 
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err == nil {
-		root = resolvedRoot
-	}
+	fixedRoot = filepath.Clean(abs)
+	// 重置缓存，使新的固定值立即生效
+	rootOnce = sync.Once{}
+	rootErr = nil
+	return nil
+}
 
-	return filepath.Clean(root), nil
+// workspaceRoot 返回固定的工作区根目录。
+// 固定后不再随进程 CWD 变化，避免安全边界漂移。
+func workspaceRoot() (string, error) {
+	rootOnce.Do(func() {
+		if fixedRoot != "" {
+			return
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			rootErr = fmt.Errorf("获取工作区失败: %w", err)
+			return
+		}
+		resolved, err := filepath.EvalSymlinks(cwd)
+		if err == nil {
+			cwd = resolved
+		}
+		fixedRoot = filepath.Clean(cwd)
+	})
+
+	if rootErr != nil {
+		return "", rootErr
+	}
+	return fixedRoot, nil
 }
 
 func resolveWorkspacePath(path string) (string, error) {

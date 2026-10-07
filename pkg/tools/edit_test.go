@@ -111,6 +111,10 @@ func TestReplaceInFileBlocksOutsideWorkspace(t *testing.T) {
 	}
 }
 
+// chdirForTest 切换到 dir 并把它设为工作区根目录。
+//
+// workspaceRoot 现在是进程级固定值（见 SetWorkspaceRoot），不再跟随 CWD，
+// 因此测试切目录时必须同步设置根目录，否则文件工具仍会解析到旧根目录。
 func chdirForTest(t *testing.T, dir string) func() {
 	t.Helper()
 
@@ -119,11 +123,19 @@ func chdirForTest(t *testing.T, dir string) func() {
 		t.Fatalf("getwd failed: %v", err)
 	}
 
+	originalRoot, rootErr := workspaceRoot()
+
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir failed: %v", err)
 	}
+	if err := SetWorkspaceRoot(dir); err != nil {
+		t.Fatalf("SetWorkspaceRoot failed: %v", err)
+	}
 
 	return func() {
+		if rootErr == nil {
+			_ = SetWorkspaceRoot(originalRoot)
+		}
 		if err := os.Chdir(original); err != nil {
 			t.Fatalf("restore chdir failed: %v", err)
 		}
