@@ -28,6 +28,9 @@ type Session struct {
 	lastSeen  time.Time
 	mu        sync.Mutex
 
+	// summary 是被压缩掉的早期历史摘要，跨轮复用，避免每轮重新摘要
+	summary string
+
 	// 运行时状态（用于 /status 命令）
 	currentTurn  int
 	lastToolName string
@@ -84,6 +87,8 @@ func (s *Session) Reset() {
 	} else {
 		s.messages = nil
 	}
+	// 历史摘要同样失效，否则会残留上一段对话的内容
+	s.summary = ""
 }
 
 // SetCancel 设置取消函数
@@ -134,6 +139,29 @@ func (s *Session) UpdateSystemPrompt(prompt string) {
 	if len(s.messages) > 0 && s.messages[0].Role == openai.ChatMessageRoleSystem {
 		s.messages[0].Content = prompt
 	}
+}
+
+// Summary 返回历史摘要
+func (s *Session) Summary() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.summary
+}
+
+// SetSummary 设置历史摘要
+func (s *Session) SetSummary(summary string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.summary = summary
+}
+
+// ReplaceMessages 整体替换消息历史（上下文压缩后调用）
+func (s *Session) ReplaceMessages(msgs []openai.ChatCompletionMessage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]openai.ChatCompletionMessage, len(msgs))
+	copy(cp, msgs)
+	s.messages = cp
 }
 
 func (s *Session) ExportSnapshot() SessionSnapshot {

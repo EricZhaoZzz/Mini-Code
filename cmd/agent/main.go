@@ -379,6 +379,8 @@ func runWorker(options workerOptions) error {
 	cliCh := cli.New(rl)
 	orch := orchestrator.New(memStore)
 	defer orch.Close() // 停止后台 Session 清理协程
+	// 注入 provider 以启用上下文压缩（超限时生成历史摘要）
+	orch.SetProvider(p, modelID)
 
 	if options.snapshotPath != "" {
 		snapshot, err := loadSessionSnapshot(options.snapshotPath)

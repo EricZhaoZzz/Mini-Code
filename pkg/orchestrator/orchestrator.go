@@ -5,7 +5,10 @@ import (
 	"mini-code/pkg/agent"
 	"mini-code/pkg/channel"
 	"mini-code/pkg/memory"
+	"mini-code/pkg/provider"
 	"mini-code/pkg/ui"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -18,6 +21,9 @@ type StreamMode int
 const (
 	StreamModeCLI StreamMode = iota // CLI 模式：直接输出到终端
 )
+
+// compactionTimeout 生成历史摘要的单次请求超时。
+const compactionTimeout = 30 * time.Second
 
 // StreamHandler 流式输出处理器接口
 type StreamHandler interface {
@@ -45,6 +51,10 @@ type Orchestrator struct {
 	memStore *memory.Store
 	router   *Router
 	restart  RestartRuntime
+
+	// provider / model 用于上下文压缩时生成历史摘要
+	provider provider.Provider
+	model    string
 
 	// stopCh 用于关闭后台 evictLoop；closeOnce 保证 Close 幂等
 	stopCh    chan struct{}
@@ -119,6 +129,9 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 	// 追加用户消息到 Session
 	session.AppendUserMessage(msg.Text)
 
+	// 上下文超限时压缩（在调用 Agent 之前，见 compactIfNeeded 的说明）
+	o.compactIfNeeded(ctx, session)
+
 	// 创建可取消 context，存入 Session 供 /cancel 使用
 	runCtx, cancel := context.WithCancel(ctx)
 	session.SetCancel(cancel)
@@ -128,6 +141,96 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 		return err
 	}
 	return o.applyPendingRestart(session)
+}
+
+// contextBudget 返回上下文预算，可用 LM_CONTEXT_BUDGET 覆盖（单位：token）。
+func contextBudget() int {
+	if v := os.Getenv("LM_CONTEXT_BUDGET"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return agent.DefaultContextTokenBudget
+}
+
+// compactIfNeeded 在历史超出预算时压缩：把较早的对话交给模型生成摘要，
+// 只保留 system + 最近若干条原文。
+//
+// 为什么放在 Orchestrator 而不是 BaseAgent.Run 内部：
+//  1. Run 的循环每轮都会重算全量历史，压缩塞进去会在同一轮内反复触发；
+//  2. Agent 按设计不持有跨轮状态（消息历史由 Session 管理），
+//     摘要无法缓存，每轮都要重新生成，既慢又额外烧 token。
+//
+// 摘要需要调用 LLM，因此需要 provider。这里从 AgentFactory 无法直接拿到，
+// 故通过 SetProvider 注入；未注入时静默跳过压缩（功能降级而非报错）。
+func (o *Orchestrator) compactIfNeeded(ctx context.Context, session *Session) {
+	if o.provider == nil {
+		return
+	}
+
+	msgs := session.Messages()
+	if !agent.NeedsCompaction(msgs, contextBudget()) {
+		return
+	}
+
+	kept, dropped := agent.SplitMessagesForCompaction(msgs, agent.DefaultKeepRecentTurns)
+	if len(dropped) == 0 {
+		return
+	}
+
+	summary := o.summarize(ctx, session, dropped)
+	if summary == "" {
+		// 压缩失败不应阻塞主流程，退回不压缩
+		return
+	}
+
+	// 写回摘要，供下一轮压缩时合并进新的摘要请求（避免每轮重新生成）
+	session.SetSummary(summary)
+
+	// 重建为：system(+摘要) + 保留的最近消息
+	rebuilt := make([]openai.ChatCompletionMessage, 0, len(kept)+1)
+	rebuilt = append(rebuilt, kept[0]) // system
+	if len(kept) > 1 {
+		rebuilt = append(rebuilt, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: "【历史对话摘要】\n" + summary,
+		})
+		rebuilt = append(rebuilt, kept[1:]...)
+	}
+	session.ReplaceMessages(rebuilt)
+
+	ui.PrintDim("  已压缩历史上下文（%d 条 → %d 条）", len(msgs), len(rebuilt))
+}
+
+// summarize 生成摘要，失败时返回空字符串。
+func (o *Orchestrator) summarize(ctx context.Context, session *Session, dropped []openai.ChatCompletionMessage) string {
+	prompt := agent.BuildCompactionSummaryPrompt(dropped)
+	if prev := session.Summary(); prev != "" {
+		prompt = "已有历史摘要：\n" + prev + "\n\n" + prompt
+	}
+
+	// 摘要请求不应无限等待：给它一个独立的短超时
+	sumCtx, cancel := context.WithTimeout(ctx, compactionTimeout)
+	defer cancel()
+
+	resp, err := o.provider.Chat(sumCtx, openai.ChatCompletionRequest{
+		Model: o.model,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: prompt},
+		},
+	})
+	if err != nil || len(resp.Choices) == 0 {
+		return ""
+	}
+
+	return agent.TruncateSummary(resp.Choices[0].Message.Content)
+}
+
+// SetProvider 注入 LLM provider 与模型名，供上下文压缩摘要使用。
+// 不调用时压缩功能自动跳过。
+func (o *Orchestrator) SetProvider(p provider.Provider, model string) {
+	o.provider = p
+	o.model = model
 }
 
 // handleCLI CLI 模式的处理

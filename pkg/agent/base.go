@@ -88,7 +88,12 @@ func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMes
 			return "", newMessages, fmt.Errorf("达到最大工具调用轮数 (%d)", a.maxTurns)
 		}
 
-		allMessages := append(messages, newMessages...)
+		// 复制后再追加，避免直接复用 messages 的底层数组：
+		// messages 来自 Session.Messages() 的副本，多轮迭代共用同一 backing
+		// array 时会产生跨轮别名污染。
+		allMessages := make([]openai.ChatCompletionMessage, 0, len(messages)+len(newMessages))
+		allMessages = append(allMessages, messages...)
+		allMessages = append(allMessages, newMessages...)
 
 		req := openai.ChatCompletionRequest{
 			Model:    a.model,
