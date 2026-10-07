@@ -33,8 +33,8 @@ func NewEscMonitor() *EscMonitor {
 	return &EscMonitor{
 		doubleEscWindow: 1500 * time.Millisecond, // 1.5 秒内按两次 Esc
 		stopChan:        make(chan struct{}),
-		stdinFd:        int(os.Stdin.Fd()),
-		doneChan:       make(chan struct{}),
+		stdinFd:         int(os.Stdin.Fd()),
+		doneChan:        make(chan struct{}),
 	}
 }
 

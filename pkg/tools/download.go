@@ -26,14 +26,14 @@ type DownloadFileArguments struct {
 }
 
 type DownloadResult struct {
-	URL          string `json:"url"`
-	Destination  string `json:"destination"`
-	Size         string `json:"size"`
-	SizeBytes    int64  `json:"size_bytes"`
-	ContentType  string `json:"content_type,omitempty"`
-	SHA256       string `json:"sha256,omitempty"`
-	Duration     string `json:"duration"`
-	StatusCode   int    `json:"status_code"`
+	URL         string `json:"url"`
+	Destination string `json:"destination"`
+	Size        string `json:"size"`
+	SizeBytes   int64  `json:"size_bytes"`
+	ContentType string `json:"content_type,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
+	Duration    string `json:"duration"`
+	StatusCode  int    `json:"status_code"`
 }
 
 func DownloadFile(args interface{}) (interface{}, error) {

@@ -233,9 +233,9 @@ func (s *ControlServer) handleConn(conn net.Conn) {
 			s.events <- WorkerEvent{
 				WorkerID: currentID,
 				Message: ControlMessage{
-					Type:    MessageTypeFailed,
+					Type:     MessageTypeFailed,
 					WorkerID: currentID,
-					Error:   err.Error(),
+					Error:    err.Error(),
 				},
 			}
 			return

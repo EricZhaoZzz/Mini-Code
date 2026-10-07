@@ -79,8 +79,8 @@ func RenameFile(args interface{}) (interface{}, error) {
 // ================== Delete File ==================
 
 type DeleteFileArguments struct {
-	Path     string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要删除的文件或目录路径"`
-	Confirm  bool   `json:"confirm" jsonschema_description:"确认删除（必须为 true 才能执行删除）"`
+	Path      string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要删除的文件或目录路径"`
+	Confirm   bool   `json:"confirm" jsonschema_description:"确认删除（必须为 true 才能执行删除）"`
 	Recursive bool   `json:"recursive" jsonschema_description:"递归删除目录（删除目录时需要）"`
 }
 
@@ -124,7 +124,7 @@ func DeleteFile(args interface{}) (interface{}, error) {
 		if err != nil {
 			return nil, fmt.Errorf("检查目录失败: %w", err)
 		}
-		
+
 		if !isEmpty && !params.Recursive {
 			return nil, fmt.Errorf("目录不为空，需要设置 recursive=true 来递归删除")
 		}
@@ -278,8 +278,8 @@ func copyDir(src, dst string) error {
 // ================== Create Directory ==================
 
 type CreateDirectoryArguments struct {
-	Path      string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要创建的目录路径"`
-	Parents   bool   `json:"parents" jsonschema_description:"是否创建父目录（类似 mkdir -p）"`
+	Path    string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要创建的目录路径"`
+	Parents bool   `json:"parents" jsonschema_description:"是否创建父目录（类似 mkdir -p）"`
 }
 
 func CreateDirectory(args interface{}) (interface{}, error) {

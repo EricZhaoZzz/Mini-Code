@@ -2,10 +2,10 @@ package tools_test
 
 import (
 	"encoding/json"
-	"path/filepath"
-	"testing"
 	"mini-code/pkg/memory"
 	"mini-code/pkg/tools"
+	"path/filepath"
+	"testing"
 )
 
 func setupMemoryTools(t *testing.T) *memory.Store {

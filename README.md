@@ -34,7 +34,6 @@
 | **网页搜索** | ✅ | 免费 Exa MCP 端点，开箱即用，无需 API key |
 | **长期记忆** | ✅ | 三级记忆存储（project/user/global），FTS5 全文检索 |
 | **Agent 专化** | ✅ | CoderAgent、ReviewerAgent、ResearcherAgent 三类专化 Agent |
-| **Telegram Bot** | ✅ | Telegram 频道支持，流式消息更新，命令处理 |
 | **命令历史** | ✅ | readline 支持，历史记录持久化 |
 | **自动补全** | ✅ | 内置命令自动补全 |
 | **彩色输出** | ✅ | 工具调用状态、成功/失败提示 |
@@ -192,60 +191,6 @@ Mini-Code 提供以下工具供 AI 助手使用：
 | `git_diff` | 查看 Git 差异（支持已暂存和未暂存变更） |
 | `git_log` | 查看 Git 提交历史 |
 
-## 🤖 Telegram Bot
-
-Mini-Code 支持 Telegram Bot 模式，让你可以通过 Telegram 使用 AI 编程助手。
-
-### 配置
-
-在 `.env` 文件中添加以下配置：
-
-```env
-# Telegram Bot Token（从 @BotFather 获取）
-TELEGRAM_BOT_TOKEN=your-bot-token
-
-# 允许使用的用户 ID（逗号分隔，为空则允许所有用户）
-TELEGRAM_ALLOWED_USERS=12345678,87654321
-```
-
-### 获取 User ID
-
-1. 在 Telegram 搜索 `@userinfobot`
-2. 发送 `/start`
-3. 它会回复你的 User ID
-
-或者临时设置 `TELEGRAM_DEBUG=1`，Bot 会在控制台打印发送消息的用户 ID。
-
-### 启动 Telegram Bot
-
-```bash
-# 直接运行
-go run ./cmd/telegram
-
-# 或编译后运行
-go build -o mini-code-telegram ./cmd/telegram
-./mini-code-telegram
-```
-
-### Telegram 命令
-
-| 命令 | 说明 |
-|------|------|
-| `/start` | 显示欢迎信息和当前工作区 |
-| `/help` | 显示帮助信息 |
-| `/reset` | 重置当前会话（保留长期记忆） |
-| `/memory` | 查看已保存的记忆 |
-| `/status` | 显示当前任务状态 |
-| `/cancel` | 取消当前正在执行的任务 |
-
-### 特性
-
-- **流式更新** - 每 1.5 秒刷新消息内容，避免消息轰炸
-- **完成通知** - 任务完成后发送新消息，触发手机推送
-- **附件支持** - 支持发送文件/图片作为附件
-- **并发安全** - 每个 chat_id 独立会话，互不干扰
-- **白名单控制** - 可限制允许访问的用户
-
 ## ⌨️ 交互命令
 
 在交互提示符下可使用以下命令：
@@ -286,8 +231,6 @@ mini-code/
 │   ├── agent/           # CLI 入口点
 │   │   ├── main.go      # 程序入口，交互式命令行界面
 │   │   └── main_test.go # 主程序测试
-│   └── telegram/        # Telegram Bot 入口点
-│       └── main.go      # Telegram Bot 启动程序
 ├── pkg/
 │   ├── agent/           # 核心引擎逻辑
 │   │   ├── base.go      # BaseAgent 实现，对话循环
@@ -296,8 +239,7 @@ mini-code/
 │   │   └── researcher.go # ResearcherAgent 专化
 │   ├── channel/         # 输入输出频道
 │   │   ├── types.go     # Channel 接口定义
-│   │   ├── cli/         # CLI 频道实现
-│   │   └── telegram/    # Telegram 频道实现
+│   │   └── cli/         # CLI 频道实现
 │   ├── memory/          # 记忆系统
 │   │   ├── store.go     # SQLite 存储层
 │   │   ├── longterm.go  # 长期记忆（FTS5）

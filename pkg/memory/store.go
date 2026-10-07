@@ -12,7 +12,7 @@ import (
 // MemoryRecord 表示一条长期记忆
 type MemoryRecord struct {
 	ID        int64
-	Scope     string   // "project" | "user" | "global"
+	Scope     string // "project" | "user" | "global"
 	Workspace string
 	Content   string
 	Tags      []string

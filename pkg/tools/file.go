@@ -2,7 +2,9 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,9 +12,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/charlievieth/fastwalk"
 	gitignore "github.com/denormal/go-gitignore"
@@ -241,17 +245,31 @@ func RunShell(args interface{}) (interface{}, error) {
 		return result, err
 	}
 
+	// 安全策略：黑名单常开，LM_SHELL_STRICT=1 时切换为白名单。
+	// 注意这只能防误操作，run_shell 本身不限制路径（见 shell_guard.go 说明）。
+	if err := CheckShellCommand(command); err != nil {
+		return nil, err
+	}
+
 	root, err := workspaceRoot()
 	if err != nil {
 		return nil, err
 	}
 
+	// 超时保护：防止长驻命令卡死整个会话。
+	//
+	// go-cmd v1.4.3 不支持 CommandContext（设置 exec.Cmd.Cancel 会直接报错），
+	// 且默认不为子进程创建独立进程组——其 Stop() 会 taskkill /T 整个进程树，
+	// 可能连带杀掉调用方自身的进程。因此这里显式要求独立进程组，
+	// 让超时终止只影响这条命令，不波及其他进程。
+	timeout := shellTimeout()
 	options := cmd.Options{
 		Buffered:       true,
 		CombinedOutput: false,
 		BeforeExec: []func(*exec.Cmd){
 			func(execCmd *exec.Cmd) {
 				execCmd.Dir = root
+				isolateProcessGroup(execCmd)
 			},
 		},
 	}
@@ -263,7 +281,22 @@ func RunShell(args interface{}) (interface{}, error) {
 		runner = cmd.NewCmdOptions(options, "sh", "-c", command)
 	}
 
-	status := <-runner.Start()
+	statusChan := runner.Start()
+
+	// 等待结果：正常结束，或超时后返回已累积的部分输出。
+	// 即便终止失败也不能无限期阻塞，因此这里用 select 而不是裸接收。
+	var status cmd.Status
+	var timedOut bool
+	select {
+	case status = <-statusChan:
+	case <-time.After(timeout):
+		timedOut = true
+		// 尽力终止，但不阻塞等待它真的结束
+		go func() {
+			_ = terminateRunner(runner)
+		}()
+		status = runner.Status()
+	}
 
 	output := strings.Join(status.Stdout, "\n")
 	if len(status.Stderr) > 0 {
@@ -274,6 +307,16 @@ func RunShell(args interface{}) (interface{}, error) {
 		output += "[stderr]: " + stderrText
 	}
 
+	// 超时优先于 exit code 报告，避免把超时误报成普通失败
+	if timedOut {
+		if output == "" {
+			output = "(命令超时，未产生输出)"
+		}
+		return output, fmt.Errorf("命令执行超时（超过 %s），已终止", timeout)
+	}
+	if errors.Is(status.Error, context.DeadlineExceeded) {
+		return output, fmt.Errorf("命令执行超时（超过 %s），已终止", timeout)
+	}
 	if status.Error != nil {
 		return output, fmt.Errorf("命令执行错误: %w", status.Error)
 	}
@@ -282,6 +325,31 @@ func RunShell(args interface{}) (interface{}, error) {
 	}
 
 	return output, nil
+}
+
+// terminateRunner 终止仍在运行的命令。
+// go-cmd 的 Stop() 存在启动竞态：命令尚未真正启动时调用会返回 ErrNotStarted，
+// 因此先等待 Status.PID 被设置再终止。
+func terminateRunner(runner *cmd.Cmd) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for runner.Status().PID == 0 {
+		if time.Now().After(deadline) {
+			return cmd.ErrNotStarted
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return runner.Stop()
+}
+
+// shellTimeout 返回命令执行超时。
+// 默认 120 秒，可用 LM_SHELL_TIMEOUT 覆盖（单位：秒）。
+func shellTimeout() time.Duration {
+	if v := os.Getenv("LM_SHELL_TIMEOUT"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 120 * time.Second
 }
 
 func parseArgs(args interface{}, out interface{}) error {

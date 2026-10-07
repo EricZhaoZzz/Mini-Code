@@ -224,10 +224,10 @@ type MultiProgress struct {
 
 // TaskProgress 单个任务进度
 type TaskProgress struct {
-	title    string
-	status   TaskStatus
-	message  string
-	spinner  int
+	title   string
+	status  TaskStatus
+	message string
+	spinner int
 }
 
 // TaskStatus 任务状态

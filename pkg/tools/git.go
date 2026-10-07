@@ -229,10 +229,10 @@ func getAheadBehind(repo *git.Repository, branchName string) (int, int, error) {
 // ================== Git Diff ==================
 
 type GitDiffArguments struct {
-	Path        string `json:"path" jsonschema_description:"Git 仓库路径，留空表示当前工作区"`
-	Staged      bool   `json:"staged" jsonschema_description:"显示已暂存的变更（类似 git diff --staged）"`
-	Unstaged    bool   `json:"unstaged" jsonschema_description:"显示未暂存的变更"`
-	File        string `json:"file" jsonschema_description:"指定文件路径，留空显示所有变更"`
+	Path     string `json:"path" jsonschema_description:"Git 仓库路径，留空表示当前工作区"`
+	Staged   bool   `json:"staged" jsonschema_description:"显示已暂存的变更（类似 git diff --staged）"`
+	Unstaged bool   `json:"unstaged" jsonschema_description:"显示未暂存的变更"`
+	File     string `json:"file" jsonschema_description:"指定文件路径，留空显示所有变更"`
 }
 
 type GitDiffResult struct {
@@ -373,8 +373,8 @@ func GitDiff(args interface{}) (interface{}, error) {
 // ================== Git Log ==================
 
 type GitLogArguments struct {
-	Path    string `json:"path" jsonschema_description:"Git 仓库路径，留空表示当前工作区"`
-	Count   int    `json:"count" jsonschema_description:"显示的提交数量，默认 10"`
+	Path  string `json:"path" jsonschema_description:"Git 仓库路径，留空表示当前工作区"`
+	Count int    `json:"count" jsonschema_description:"显示的提交数量，默认 10"`
 }
 
 type GitLogResult struct {

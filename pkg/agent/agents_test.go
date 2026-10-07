@@ -1,9 +1,9 @@
 package agent_test
 
 import (
-	"testing"
 	"mini-code/pkg/agent"
 	"mini-code/pkg/provider"
+	"testing"
 )
 
 func newTestProvider() provider.Provider {

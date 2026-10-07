@@ -86,7 +86,7 @@ func TestEscMonitor_DoubleEscTrigger(t *testing.T) {
 	if m.enabled {
 		t.Error("monitor should be disabled after double Esc")
 	}
-	
+
 	// cancel 函数在 goroutine 中调用，等待一下
 	time.Sleep(10 * time.Millisecond)
 	if !cancelCalled {

@@ -2,13 +2,10 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"mini-code/pkg/agent"
 	"mini-code/pkg/channel"
 	"mini-code/pkg/memory"
-	"mini-code/pkg/textutil"
 	"mini-code/pkg/ui"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,8 +16,7 @@ import (
 type StreamMode int
 
 const (
-	StreamModeCLI      StreamMode = iota // CLI 模式：直接输出到终端
-	StreamModeTelegram                   // Telegram 模式：定时 EditMessage
+	StreamModeCLI StreamMode = iota // CLI 模式：直接输出到终端
 )
 
 // StreamHandler 流式输出处理器接口
@@ -116,15 +112,6 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 	session.SetCancel(cancel)
 	defer cancel()
 
-	// 根据 Channel 类型选择不同的处理方式
-	isTelegram := strings.HasPrefix(msg.ChannelID, "telegram:")
-
-	if isTelegram {
-		if err := o.handleTelegram(runCtx, session, agnt, msg, ch); err != nil {
-			return err
-		}
-		return o.applyPendingRestart(session)
-	}
 	if err := o.handleCLI(runCtx, session, agnt, ch); err != nil {
 		return err
 	}
@@ -161,84 +148,6 @@ func (o *Orchestrator) handleCLI(ctx context.Context, session *Session, agnt age
 		return err
 	}
 	_ = reply // 已通过 streaming 输出
-	return nil
-}
-
-// handleTelegram Telegram 模式的处理（支持流式 EditMessage）
-func (o *Orchestrator) handleTelegram(ctx context.Context, session *Session, agnt agent.Agent, msg channel.IncomingMessage, ch channel.Channel) error {
-	chatID := msg.ChannelID
-
-	// 发送初始占位消息
-	msgID, err := ch.Send(channel.OutgoingMessage{
-		ChatID: chatID,
-		Text:   "⏳ 正在处理...",
-	})
-	if err != nil {
-		return fmt.Errorf("send initial message: %w", err)
-	}
-
-	// 流式更新状态
-	var contentBuffer strings.Builder
-	var lastUpdate time.Time
-	updateInterval := 1500 * time.Millisecond // Telegram 更新间隔 1.5s
-
-	// 创建流式处理器
-	handler := agent.StreamChunkHandler(func(content string, done bool) error {
-		if done {
-			// 流结束，更新最终消息内容
-			fullContent := contentBuffer.String()
-			if fullContent == "" {
-				fullContent = "✅ 任务完成"
-			}
-			// 更新消息为最终内容
-			if msgID != "" {
-				ch.EditMessage(msgID, fullContent)
-			}
-			return nil
-		}
-
-		contentBuffer.WriteString(content)
-
-		// 定时更新消息（避免频繁调用 API，每 1.5 秒更新一次）
-		if time.Since(lastUpdate) > updateInterval && contentBuffer.Len() > 0 {
-			text := contentBuffer.String()
-			// Telegram 消息长度限制
-			text = textutil.TruncateWithEllipsis(text, 4000)
-			if msgID != "" {
-				ch.EditMessage(msgID, text)
-			}
-			lastUpdate = time.Now()
-		}
-		return nil
-	})
-
-	// 执行 Agent
-	reply, newMsgs, err := agnt.Run(ctx, session.Messages(), handler)
-
-	// 将新消息追加到 Session
-	if len(newMsgs) > 0 {
-		session.AppendMessages(newMsgs)
-	}
-
-	if err != nil {
-		if ctx.Err() != nil {
-			// 任务被取消，更新消息并通知
-			ch.EditMessage(msgID, "🛑 任务已取消")
-			ch.NotifyDone(chatID, "任务已取消")
-			return nil
-		}
-		// 发送错误消息
-		ch.EditMessage(msgID, fmt.Sprintf("❌ 执行失败: %v", err))
-		return err
-	}
-
-	// 发送完成通知（触发手机推送）
-	// 这是一个简短的完成提示，实际内容已通过 EditMessage 更新
-	if reply != "" {
-		// 如果 reply 有内容，说明已通过流式更新显示
-		// 发送简短完成通知触发推送
-		ch.NotifyDone(chatID, "✅ 任务已完成")
-	}
 	return nil
 }
 

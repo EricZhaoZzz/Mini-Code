@@ -61,10 +61,15 @@ func BuildSystemPromptWithMemory(memStore *memory.Store) string {
 
 ## 工具使用规范
 
-### 文件操作
-- 所有文件路径必须是工作区内的相对路径，禁止访问工作区外的文件
-- 使用 replace_in_file 时，old 参数必须与文件中的原始文本完全匹配
-- 写入文件时保持合理的缩进和格式
+### 文件与命令边界
+- 文件操作工具（read_file / write_file / replace_in_file 等）只能访问工作区内的路径，越界会被拒绝。
+- 使用 replace_in_file 时，old 参数必须与文件中的原始文本完全匹配。
+- 写入文件时保持合理的缩进和格式。
+- run_shell 是可信工具：它以工作区为工作目录，但**能够访问工作区之外的任何文件**，
+  且只拦截了少数不可逆命令（见 shell_guard.go）。仅在确有需要时使用，
+  不要把 shell 当作绕过文件工具路径限制的手段。
+- 不要在用户未明确授权时，对工作区外的路径执行读写、删除或修改。
+- run_shell 有执行超时（默认 120 秒），超时会被强制终止。
 
 ### Shell 命令
 - 仅在必要时使用 shell 命令

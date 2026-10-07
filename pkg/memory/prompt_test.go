@@ -1,10 +1,10 @@
 package memory_test
 
 import (
+	"mini-code/pkg/memory"
 	"path/filepath"
 	"strings"
 	"testing"
-	"mini-code/pkg/memory"
 )
 
 func TestBuildPromptSuffix_ContainsRememberedFacts(t *testing.T) {

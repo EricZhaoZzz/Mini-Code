@@ -1,15 +1,13 @@
 # AGENTS.md
 
 ## 项目简介
-`mini-code` 是一个本地运行的中文 AI 编程助手（CLI），Go 模块路径为 `mini-code`。支持两种运行形态：
+`mini-code` 是一个本地运行的中文 AI 编程助手（CLI），Go 模块路径为 `mini-code`。目前仅保留 CLI 一种运行形态：
 - CLI：`go run ./cmd/agent`
-- Telegram Bot：`go run ./cmd/telegram`
 
 ## 开发命令
 ```bash
 # 构建
 go build -o mini-code.exe ./cmd/agent
-go build -o mini-code-telegram.exe ./cmd/telegram
 
 # 测试
 go test ./...
@@ -26,15 +24,12 @@ go vet ./...
 
 可选变量：`LM_LOG_LEVEL`（minimal/normal/verbose）、`LM_DEBUG`（写入 `lm_debug.log`）、`LM_MAX_TURNS`（默认 50）。
 
-Telegram Bot 需要额外配置：`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`（可选）。
-
 ## 目录结构
 ```
 cmd/agent/main.go         # CLI 入口（supervisor/worker 双角色）
-cmd/telegram/main.go     # Telegram Bot 入口
 pkg/
 ├── agent/               # Agent 实现（base.go, coder/reviewer/researcher.go）
-├── channel/             # IO 抽象（cli/, telegram/）
+├── channel/             # IO 抽象（cli/）
 ├── memory/              # 记忆系统（两层 SQLite + FTS5）
 ├── orchestrator/        # 会话编排（orchestrator, router, session）
 ├── provider/            # LLM 客户端（OpenAI 兼容）
@@ -60,7 +55,6 @@ pkg/
 ## 调试
 - `LM_DEBUG=1` 写入 `lm_debug.log`
 - `LM_LOG_LEVEL=verbose` 打印完整请求/响应
-- `TELEGRAM_DEBUG=1` 打印 Telegram 发送者 user_id
 
 ## 提交规范
 Conventional Commits：`feat:` / `fix:` / `docs:` / `refactor:` / `test:`，可加 scope。

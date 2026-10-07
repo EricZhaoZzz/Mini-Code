@@ -1,9 +1,9 @@
 package memory_test
 
 import (
+	"mini-code/pkg/memory"
 	"path/filepath"
 	"testing"
-	"mini-code/pkg/memory"
 )
 
 func TestStore_OpenCreatesTablesAutomatically(t *testing.T) {

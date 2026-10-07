@@ -684,8 +684,8 @@ func TestSearchInFilesSubdirectory(t *testing.T) {
 
 	// 创建多个文件
 	files := map[string]string{
-		"root.txt":           "findme in root",
-		filepath.Join("src", "main.go"):        "findme in src",
+		"root.txt":                               "findme in root",
+		filepath.Join("src", "main.go"):          "findme in src",
 		filepath.Join("src", "pkg", "helper.go"): "findme in pkg",
 	}
 	for path, content := range files {
@@ -734,10 +734,10 @@ func TestSearchInFilesSkipsGitAndNodeModules(t *testing.T) {
 
 	// 在各目录创建包含搜索关键词的文件
 	files := map[string]string{
-		filepath.Join(".git", "config"):               "findme in git",
-		filepath.Join(".git", "objects", "abc"):        "findme in git objects",
+		filepath.Join(".git", "config"):                      "findme in git",
+		filepath.Join(".git", "objects", "abc"):              "findme in git objects",
 		filepath.Join("node_modules", "package", "index.js"): "findme in node_modules",
-		filepath.Join("src", "main.go"):               "findme in src",
+		filepath.Join("src", "main.go"):                      "findme in src",
 	}
 	for path, content := range files {
 		if err := os.WriteFile(filepath.Join(workspace, path), []byte(content), 0o644); err != nil {
@@ -1413,8 +1413,8 @@ func TestSearchInFilesReturnsRelativePaths(t *testing.T) {
 
 	// 创建包含关键词的文件
 	files := map[string]string{
-		"root.txt":                     "findme in root",
-		filepath.Join("src", "main.go"):        "findme in main",
+		"root.txt":                                 "findme in root",
+		filepath.Join("src", "main.go"):            "findme in main",
 		filepath.Join("src", "services", "api.go"): "findme in api",
 	}
 	for path, content := range files {

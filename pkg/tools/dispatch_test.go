@@ -2,8 +2,8 @@ package tools_test
 
 import (
 	"encoding/json"
-	"testing"
 	"mini-code/pkg/tools"
+	"testing"
 )
 
 func TestDispatchAgent_RequiresRoleAndTask(t *testing.T) {

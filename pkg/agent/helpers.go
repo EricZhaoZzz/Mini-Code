@@ -70,12 +70,15 @@ func truncateForLog(s string, limit int) string {
 	return textutil.TruncateWithEllipsis(s, limit)
 }
 
-// executeToolCall 执行单个工具调用
-func (a *BaseAgent) executeToolCall(toolCall openai.ToolCall) (resultStr string) {
+// executeToolCall 执行单个工具调用。
+//
+// 返回的 error 必须非 nil 当且仅当工具执行失败 —— UI 摘要与上层统计都依赖该字段。
+// 不能只把错误写进结果字符串：那样调用方会把它当成成功（回归缺陷）。
+func (a *BaseAgent) executeToolCall(toolCall openai.ToolCall) (string, error) {
 	executor := tools.Executors[toolCall.Function.Name]
-
 	if executor == nil {
-		return fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name)
+		return fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name),
+			fmt.Errorf("未知工具 %s", toolCall.Function.Name)
 	}
 
 	result, err := executor(toolCall.Function.Arguments)
@@ -83,19 +86,25 @@ func (a *BaseAgent) executeToolCall(toolCall openai.ToolCall) (resultStr string)
 
 	if err != nil {
 		if output != "" {
-			resultStr = fmt.Sprintf("输出: %s\n错误: %s", output, err)
-		} else {
-			resultStr = fmt.Sprintf("错误: %s", err)
+			return fmt.Sprintf("输出: %s\n错误: %s", output, err), err
 		}
-	} else {
-		if output != "" {
-			resultStr = output
-		} else {
-			resultStr = fmt.Sprintf("%v", result)
-		}
+		return fmt.Sprintf("错误: %s", err), err
 	}
 
-	return resultStr
+	if output != "" {
+		return output, nil
+	}
+	if result == nil {
+		return "", nil
+	}
+
+	// 非字符串结果（结构体 / map）必须序列化为 JSON：
+	// 直接用 %v 会输出 Go 语法串（map[path:a.go]），模型无法解析。
+	encoded, encErr := json.Marshal(result)
+	if encErr != nil {
+		return fmt.Sprintf("%v", result), nil
+	}
+	return string(encoded), nil
 }
 
 // executeToolCallsConcurrently 并发执行工具调用，结果按原始顺序返回
@@ -139,12 +148,13 @@ func (a *BaseAgent) executeToolCallsConcurrently(ctx context.Context, toolCalls 
 			}
 
 			// 执行工具调用
-			resultStr := a.executeToolCall(toolCall)
+			resultStr, execErr := a.executeToolCall(toolCall)
 			results[index] = toolCallResult{
 				index:      index,
 				toolCallID: toolCall.ID,
 				toolName:   toolCall.Function.Name,
 				resultStr:  resultStr,
+				err:        execErr,
 			}
 		}(i, tc)
 	}
@@ -207,11 +217,12 @@ func (a *BaseAgent) displayToolCallsResults(results []toolCallResult) {
 		}
 	}
 
-	// 显示摘要
-	ui.PrintDim("  完成: %d 成功", success)
+	// 显示摘要：失败数必须如实呈现，不能只报成功数
 	if failed > 0 {
-		ui.PrintError("  %d 失败", failed)
+		ui.PrintError("  完成: %d 成功, %d 失败", success, failed)
+		return
 	}
+	ui.PrintDim("  完成: %d 成功", success)
 }
 
 func (a *BaseAgent) debugLog(tag string, v any) {
@@ -223,10 +234,68 @@ func (a *BaseAgent) debugLog(tag string, v any) {
 	a.debugLogger.Printf("[%s] %s\n%s\n", time.Now().Format("15:04:05.000"), tag, data)
 }
 
+// toolCallAccumulator 按 delta 的 Index 累积单个工具调用的分片字段。
+type toolCallAccumulator struct {
+	call openai.ToolCall
+	args strings.Builder
+}
+
+// assembleToolCalls 把流式返回的工具调用分片组装成完整的调用列表。
+//
+// 关键点：不能用「slice 下标」代替 delta 的 Index。旧实现假定两者相等，
+// 并在 Index==nil 时直接丢弃整个分片，导致后续调用的参数错位甚至丢失
+// （模型会拿着空参数去调工具，且收不到任何错误提示）。
+// 当 Index 缺失时退化为「下一个到达位置」，保证参数不丢。
+func assembleToolCalls(deltas []openai.ToolCall) []openai.ToolCall {
+	accumulators := make(map[int]*toolCallAccumulator, len(deltas))
+	order := make([]int, 0, len(deltas))
+
+	for _, tc := range deltas {
+		idx := len(order)
+		if tc.Index != nil {
+			idx = *tc.Index
+		}
+
+		acc, ok := accumulators[idx]
+		if !ok {
+			acc = &toolCallAccumulator{
+				call: openai.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: openai.FunctionCall{
+						Name: tc.Function.Name,
+					},
+				},
+			}
+			accumulators[idx] = acc
+			order = append(order, idx)
+		}
+
+		// 后续分片可能补齐首块缺失的字段
+		if tc.ID != "" {
+			acc.call.ID = tc.ID
+		}
+		if tc.Function.Name != "" {
+			acc.call.Function.Name = tc.Function.Name
+		}
+		if tc.Function.Arguments != "" {
+			acc.args.WriteString(tc.Function.Arguments)
+		}
+	}
+
+	toolCalls := make([]openai.ToolCall, 0, len(order))
+	for _, idx := range order {
+		call := accumulators[idx].call
+		call.Function.Arguments = accumulators[idx].args.String()
+		toolCalls = append(toolCalls, call)
+	}
+	return toolCalls
+}
+
 // consumeStream 消费流式响应，返回内容、工具调用、完成原因
 func (a *BaseAgent) consumeStream(ctx context.Context, stream *openai.ChatCompletionStream, handler StreamChunkHandler) (reply string, toolCalls []openai.ToolCall, finishReason openai.FinishReason, err error) {
 	var contentBuilder strings.Builder
-	var toolCallsDelta = make(map[int]*strings.Builder)
+	var toolCallDeltas []openai.ToolCall
 
 	for {
 		response, recvErr := stream.Recv()
@@ -256,26 +325,8 @@ func (a *BaseAgent) consumeStream(ctx context.Context, stream *openai.ChatComple
 			}
 		}
 
-		// 处理工具调用
-		for _, tc := range delta.ToolCalls {
-			if tc.Index == nil {
-				continue
-			}
-			idx := *tc.Index
-			if _, exists := toolCallsDelta[idx]; !exists {
-				toolCallsDelta[idx] = &strings.Builder{}
-				toolCalls = append(toolCalls, openai.ToolCall{
-					ID:   tc.ID,
-					Type: tc.Type,
-					Function: openai.FunctionCall{
-						Name: tc.Function.Name,
-					},
-				})
-			}
-			if tc.Function.Arguments != "" {
-				toolCallsDelta[idx].WriteString(tc.Function.Arguments)
-			}
-		}
+		// 处理工具调用：先收集全部分片，流结束后统一按 index 组装
+		toolCallDeltas = append(toolCallDeltas, delta.ToolCalls...)
 
 		// 捕获 finish_reason 并结束流
 		if choice.FinishReason != "" {
@@ -286,11 +337,7 @@ func (a *BaseAgent) consumeStream(ctx context.Context, stream *openai.ChatComple
 	}
 
 	// 组装最终的 tool calls
-	for idx, builder := range toolCallsDelta {
-		if idx < len(toolCalls) {
-			toolCalls[idx].Function.Arguments = builder.String()
-		}
-	}
+	toolCalls = assembleToolCalls(toolCallDeltas)
 
 	// 通知流结束
 	if handler != nil {

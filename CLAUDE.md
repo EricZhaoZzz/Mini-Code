@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目简介
 
-Mini-Code 是一个基于 Go 的本地 AI 编程助手，通过 OpenAI 兼容接口与 LLM 交互。提供两种运行形态：CLI（`cmd/agent`，含监督器/Worker 分进程热重启机制）与 Telegram Bot（`cmd/telegram`）。内置 20 个工具（文件 / Shell / Git / 记忆 / 网页搜索 / 子 Agent 调度）。
+Mini-Code 是一个基于 Go 的本地 AI 编程助手，通过 OpenAI 兼容接口与 LLM 交互。目前仅提供 CLI 一种运行形态（`cmd/agent`，含监督器/Worker 分进程热重启机制）。内置 20 个工具（文件 / Shell / Git / 记忆 / 网页搜索 / 子 Agent 调度）。
 
 Go 模块路径为 `mini-code`，包导入形如 `mini-code/pkg/agent`（非 `github.com/...`）。
 
@@ -13,11 +13,9 @@ Go 模块路径为 `mini-code`，包导入形如 `mini-code/pkg/agent`（非 `gi
 ```bash
 # 构建
 go build -o mini-code.exe ./cmd/agent        # CLI（Windows）
-go build -o mini-code-telegram.exe ./cmd/telegram
 
 # 运行（开发模式）
 go run ./cmd/agent
-go run ./cmd/telegram
 
 # 测试
 go test ./...                                      # 全部
@@ -45,21 +43,15 @@ LM_VERBOSE=1           # 在 BaseAgent 上启用 verbose 模式（独立于 LM_L
 LM_DEBUG=true          # 调试日志写入 lm_debug.log
 LM_MAX_TURNS=50        # 单次任务最大工具轮次（0=不限）
 EXA_MCP_URL=           # 可选：覆盖 Exa 免费搜索端点（默认 https://mcp.exa.ai/mcp，无需 API key）
-
-# Telegram（仅 cmd/telegram 使用）
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_ALLOWED_USERS=123,456   # 为空则允许所有用户
 ```
 
 ## 架构概览（分层）
 
 ```
 cmd/agent/main.go        CLI 入口，同时承担 supervisor 与 worker 双角色
-cmd/telegram/main.go     Telegram Bot 入口
 
 pkg/channel/             统一 IO 抽象（types.go 定义 Channel 接口）
   cli/                     CLI 频道（readline REPL）
-  telegram/                Telegram Bot 频道（流式 EditMessage）
 
 pkg/orchestrator/        会话编排
   orchestrator.go          Session 管理，消息路由入口
@@ -71,7 +63,6 @@ pkg/agent/               Agent 实现
   base.go                  BaseAgent：流式调用、并发工具调度、工具过滤
   coder.go / reviewer.go / researcher.go   专化 Agent（覆盖 system prompt 与允许工具集）
   prompt.go                系统提示构建（含记忆注入）
-  engine.go                legacy 兼容层（ClawEngine = BaseAgent 别名）
 
 pkg/memory/              记忆系统（两个独立 SQLite 连接）
   store.go                 globalDB + projectDB
@@ -105,8 +96,8 @@ Channel → Orchestrator.HandleMessage → Router 选择 Agent 类型
 - **Agent 专化 + 关键词路由**
   `orchestrator/router.go` 用简单关键词匹配（中英混合，如「审查」「review」「调研」「research」）将消息路由到 `coder`（默认）/`reviewer`/`researcher`。专化 Agent 通过 `systemPromptOverride` 追加在共享 system prompt 之后（不替换），并可限制 `allowedTools`。工具白名单：Coder = 全部（nil）；Reviewer = 只读（`read_file, list_files, search_in_files, git_*,  get_file_info, recall`）；Researcher = `read_file, list_files, search_in_files, download_file, run_shell, recall, remember`。
 
-- **Channel 抽象统一 CLI/Telegram**
-  `channel.Channel` 是 IO 接口：`Send`/`EditMessage`/`NotifyDone`/`SendFile`。CLI 的 `EditMessage` 为 no-op，Telegram 每 1.5s 刷新消息避免轰炸。新增频道只需实现该接口。
+- **Channel 抽象**
+  `channel.Channel` 是 IO 接口：`Send`/`EditMessage`/`NotifyDone`/`SendFile`。CLI 的 `EditMessage` 为 no-op。新增频道只需实现该接口。
 
 - **记忆两层 SQLite**
   全局库（用户级/跨项目）+ 项目库（仅当前 workspace），均启用 FTS5。`Store.migrate()` 自动建表。`memory/prompt.go` 在构建 system prompt 时检索相关记忆注入。
@@ -126,8 +117,9 @@ Channel → Orchestrator.HandleMessage → Router 选择 Agent 类型
 - **跨平台 Shell**
   `run_shell` 在 Windows 用 `cmd /C`，Unix 用 `/bin/sh -c`。命令 `mini-code restart` 是特殊拦截值（`pkg/tools/restart.go`），不经 shell 执行，而是调用注册的 `RestartHandler` 触发热重启。
 
-- **兼容垫片**
-  `pkg/agent/engine.go` 中的 `ClawEngine`/`chatCompletionClient`/`legacyClientAdapter` 是 Phase 1 遗留兼容层，仅为旧测试编译通过，新代码应直接用 `BaseAgent` + `provider.Provider`。
+- **Agent 实现**
+  Agent 一律直接用 `BaseAgent` + `provider.Provider`（或 `coder`/`reviewer`/`researcher` 三个专化预设）。
+  Phase 1 的 `ClawEngine` 兼容层已于 2026-10-06 移除。
 
 ## 工具系统扩展
 
@@ -143,7 +135,6 @@ Channel → Orchestrator.HandleMessage → Router 选择 Agent 类型
 
 - `LM_DEBUG=1` 写入 `lm_debug.log`（已在 `.gitignore`，但可能较大，定期清理）
 - `LM_LOG_LEVEL=verbose` 打印完整请求/响应
-- Telegram 侧设 `TELEGRAM_DEBUG=1` 会在控制台打印发送者 user_id
 
 ## 提交规范
 

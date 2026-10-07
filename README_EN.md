@@ -227,9 +227,9 @@ mini-code/
 │   ├── main.go          # Program entry, interactive CLI interface
 │   └── main_test.go     # Main program tests
 ├── pkg/
-│   ├── agent/           # Core engine logic
-│   │   ├── engine.go    # ClawEngine implementation, conversation loop
-│   │   └── engine_test.go
+│   ├── agent/           # Core agent logic
+│   │   ├── base.go      # BaseAgent: streaming, concurrent tool dispatch
+│   │   └── base_test.go
 │   ├── provider/        # LLM provider client
 │   │   └── client.go
 │   ├── tools/           # Tool registration and execution

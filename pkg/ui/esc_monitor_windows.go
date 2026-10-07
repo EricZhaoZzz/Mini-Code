@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	kernel32               = syscall.NewLazyDLL("kernel32.dll")
+	kernel32                          = syscall.NewLazyDLL("kernel32.dll")
 	getNumberOfConsoleInputEventsProc = kernel32.NewProc("GetNumberOfConsoleInputEvents")
-	readConsoleInputProc   = kernel32.NewProc("ReadConsoleInputW")
-	getStdHandleProc       = kernel32.NewProc("GetStdHandle")
+	readConsoleInputProc              = kernel32.NewProc("ReadConsoleInputW")
+	getStdHandleProc                  = kernel32.NewProc("GetStdHandle")
 )
 
 const (
@@ -27,11 +27,11 @@ type inputRecord struct {
 }
 
 type keyEventRecord struct {
-	bKeyDown         int32
-	wRepeatCount     uint16
-	wVirtualKeyCode  uint16
-	wVirtualScanCode uint16
-	unicodeChar      uint16
+	bKeyDown          int32
+	wRepeatCount      uint16
+	wVirtualKeyCode   uint16
+	wVirtualScanCode  uint16
+	unicodeChar       uint16
 	dwControlKeyState uint32
 }
 
