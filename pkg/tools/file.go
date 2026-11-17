@@ -52,7 +52,7 @@ func WriteFile(args interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
 
-	return fmt.Sprintf("文件已写入: %s", displayPath(targetPath)), nil
+	return withLazyInstructions(targetPath, fmt.Sprintf("文件已写入: %s", displayPath(targetPath))), nil
 }
 
 type ReadFileArguments struct {
@@ -84,7 +84,11 @@ func ReadFile(args interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("读取文件失败: %w", err)
 	}
 
-	return sliceFileLines(string(data), params.Offset, params.Limit)
+	out, err := sliceFileLines(string(data), params.Offset, params.Limit)
+	if err != nil {
+		return nil, err
+	}
+	return withLazyInstructions(targetPath, out), nil
 }
 
 // sliceFileLines 按行截取文件内容。完整读取时原样返回（不加行号，
@@ -176,10 +180,10 @@ func ListFiles(args interface{}) (interface{}, error) {
 
 	sort.Strings(files)
 	if len(files) == 0 {
-		return "未找到任何文件", nil
+		return withLazyInstructions(rootPath, "未找到任何文件"), nil
 	}
 
-	return strings.Join(files, "\n"), nil
+	return withLazyInstructions(rootPath, strings.Join(files, "\n")), nil
 }
 
 type SearchInFilesArguments struct {

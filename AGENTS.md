@@ -46,7 +46,7 @@ cmd/agent/main.go          # supervisor + worker 双角色入口
 pkg/channel/               # Channel IO 接口；cli/ 为 readline REPL
 pkg/orchestrator/          # Session 管理、路由、上下文压缩、快照恢复
 pkg/agent/                 # BaseAgent + coder/reviewer/researcher 预设
-pkg/memory/                # 两层 SQLite（global/project）+ FTS5
+pkg/memory/                # 多级指令文件 + 文件式自动记忆（仿 Claude Code）
 pkg/provider/              # Provider 接口；openai.go / pie_gateway.go
 pkg/sandbox/               # L2 OS 沙箱（landlock/seatbelt/none）+ 审计日志
 pkg/supervisor/            # TCP 控制协议与热重启运行时
@@ -82,8 +82,10 @@ CLI → Orchestrator.Handle → Router 选 agent 类型
 - **上下文压缩在 Orchestrator 而非 Agent**：Agent 无跨轮状态，压缩若放进 Run 会每轮重复触发。
   默认预算 96k token，保留 system + 最近 12 条，摘要写回 Session 供下次合并；调用 LLM 失败时
   静默放弃压缩，不阻塞主流程。
-- **记忆库**：global DB `~/.mini-code/memory.db`（user/global 长期记忆 + session_memory），
-  project DB `./.mini-code/project.db`（仅 project scope）；均启用 FTS5，单写连接 + WAL。
+- **记忆**：指令文件 `~/.mini-code/MINICODE.md` → 根到工作区各级 `MINICODE.md`（回退 AGENTS.md / CLAUDE.md）
+  → `MINICODE.local.md` → `rules/*.md`，支持 `@path` 导入，子目录与 `paths:` 条件规则由文件工具按需注入；
+  自动记忆在 `~/.mini-code/projects/<slug>/memory/`（每条一个 md + `MEMORY.md` 索引），经 remember/recall/forget 读写。
+  详见 CLAUDE.md。
 - **工具系统**：`registry.go` 的 `init()` 注册；参数结构体同时使用
   `jsonschema:"required"`（生成 function schema）与 `validate:"required"`（运行时校验）；
   schema 由 `invopop/jsonschema` 自动生成。`dispatch_agent` 的工厂由 `main.go` 注入，
@@ -115,7 +117,7 @@ CLI → Orchestrator.Handle → Router 选 agent 类型
 
 ## CLI 特别注意
 - Windows 输出 `mini-code.exe`；shell 走 `cmd /C`，Unix 走 `/bin/sh -c`
-- 内置命令：`help/h/?`、`exit/quit/q`、`clear/cls`、`reset/r/new/n`、`history/hist`、`resume`、`version/v`
+- 内置命令：`help/h/?`、`exit/quit/q`、`clear/cls`、`reset/r/new/n`、`history/hist`、`resume`、`version/v`、`memory/mem`（`memory edit [user|project|local|auto]`）、`# <内容>`（追加到指令文件）、`init`（生成项目指令文件）
 - 历史文件 `.mini-code-history`，运行时数据在 `.mini-code/`
 - 会话持久化：每次任务结束（含出错/取消）由 Orchestrator 写入 `.mini-code/sessions/last.json`（tmp+rename，0600），`resume` 命令恢复并按当前状态重建系统提示
 

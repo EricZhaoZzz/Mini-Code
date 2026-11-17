@@ -62,7 +62,7 @@ pkg/sandbox/             L2 OS 沙箱（Linux Landlock / macOS Seatbelt / 其他
 pkg/channel/             Channel IO 接口（types.go）；cli/ 为 readline REPL
 pkg/orchestrator/        Session 管理、关键词路由、上下文压缩、SessionSnapshot（热重启交接）
 pkg/agent/               BaseAgent + coder/reviewer/researcher 专化预设；prompt.go 构建系统提示（含记忆注入）；context.go token 估算
-pkg/memory/              两个独立 SQLite 连接（global + project），长期记忆 + 短期会话记忆
+pkg/memory/              多级指令文件（MINICODE.md 层级 / @import / rules / 子目录按需加载）+ 文件式自动记忆
 pkg/provider/            Provider 接口；openai.go / pie_gateway.go
 pkg/supervisor/          TCP 控制协议（control.go）与 worker 侧客户端（worker_runtime.go）
 pkg/tools/               工具注册、执行、工作区校验、shell 防护
@@ -103,7 +103,7 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
   junction 是 reparse point 而非符号链接：`os.Lstat` 的 Mode 不含 `ModeSymlink`，`EvalSymlinks` 也解析不了其内部文件，`filepath.Rel` 会把它当普通子目录放行。必须查 `FILE_ATTRIBUTE_REPARSE_POINT` 或用 `GetFinalPathNameByHandle` 取真实路径（见 `workspace_windows.go`）。
 
 - **Landlock 必须在 runner 子进程里收紧**
-  Landlock 作用于调用线程且不可逆，在主进程收紧会锁死 mini-code 自身（`~/.mini-code/memory.db`、审计日志、`.mini-code/releases/`）。因此 `sandbox.Wrap` 只把命令改写为 `mini-code --sandbox-run ...`，由该子进程收紧后再 exec；`main.go` 开头用 `sandbox.IsRunnerInvocation` 优先分流。
+  Landlock 作用于调用线程且不可逆，在主进程收紧会锁死 mini-code 自身（`~/.mini-code/` 下的记忆、审计日志、`.mini-code/releases/`）。因此 `sandbox.Wrap` 只把命令改写为 `mini-code --sandbox-run ...`，由该子进程收紧后再 exec；`main.go` 开头用 `sandbox.IsRunnerInvocation` 优先分流。
 
 - **Agent 路由刻意非对称**
   `router.go` 关键词匹配（中英混合）：写入意图优先级最高，直接归 coder（唯一拥有全部工具，误判代价最低）；其次 reviewer，再 researcher，默认 coder。中文关键词按子串匹配，英文按整词匹配并允许 s/ed/ing 等词形（避免 add 命中 address）。专化 prompt **追加**在共享 prompt 之后，不替换；reviewer / researcher 都只持有只读工具白名单（见各自 `*Tools` 变量），不含 `run_shell` / `download_file`。
@@ -114,8 +114,12 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
 - **BaseAgent 并发工具执行**
   同一轮多个 tool_call 并发（`maxConcurrency=5`），全部完成后进入下一轮；非流式路径（handler=nil）仅供测试。
 
-- **记忆两层 SQLite**
-  global 库 `~/.mini-code/memory.db`（user/global 长期记忆 + session_memory），project 库 `./.mini-code/project.db`（仅 project scope）；均启用 FTS5，单写连接 + WAL，`Store.migrate()` 自动建表。
+- **记忆仿 Claude Code，分两块**（`pkg/memory`，入口 `memory.Context`，所有方法 nil 安全）
+  - 指令记忆（人写，常驻系统提示）：`~/.mini-code/MINICODE.md` → 文件系统根到工作区每级的 `MINICODE.md` / `.mini-code/MINICODE.md` → `MINICODE.local.md` → `rules/*.md`（用户级与项目级 `.mini-code/rules/`）。每级无 MINICODE.md 时回退 `AGENTS.md`，再回退 `CLAUDE.md`（本仓库即加载 AGENTS.md）。支持 `@path` 导入（最深 5 层，跳过代码块）。
+  - 按需加载：文件工具（read/write/replace/list）访问子目录时，`LazyLoader` 把该子目录链上的指令文件与 `paths:` 匹配的条件规则附在工具结果末尾，每会话每文件只注入一次；reset / resume / 上下文压缩后清空记录。
+  - 自动记忆（模型写）：`~/.mini-code/projects/<工作区slug>/memory/`，一条一个 md（frontmatter: name/description/type∈user|feedback|project|reference）+ `MEMORY.md` 索引（前 200 行注入）。仅经 `remember/recall/forget` 读写，不放宽文件工具的工作区边界。
+  - Orchestrator 每次任务前从磁盘重建系统提示，编辑指令文件或 remember 后无需重启。
+  - `migrate.go` 一次性把旧 SQLite 记忆导出为 `legacy-*` 记忆（项目库改名 `.bak`），下个版本删除该文件与 `modernc.org/sqlite` 依赖。
 
 - **原子文件写入**
   `atomic_write_unix.go` / `atomic_write_windows.go` 分平台实现 tmp+rename。
@@ -139,7 +143,7 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
 
 ## CLI 备注
 
-- 内置命令：`help/h/?`、`exit/quit/q`、`clear/cls`、`reset/r/new/n`、`history/hist`、`resume`、`version/v`
+- 内置命令：`help/h/?`、`exit/quit/q`、`clear/cls`、`reset/r/new/n`、`history/hist`、`resume`、`version/v`、`memory/mem`（`memory edit [user|project|local|auto]`）、`# <内容>`（追加到指令文件）、`init`（生成项目指令文件）
 - 历史文件 `.mini-code-history`，运行时数据在 `.mini-code/`
 - 会话持久化：每次任务结束（含出错/取消）由 Orchestrator 写入 `.mini-code/sessions/last.json`（tmp+rename，0600），`resume` 命令恢复并按当前状态重建系统提示
 - `LM_LOG_LEVEL=verbose` 打印完整请求/响应

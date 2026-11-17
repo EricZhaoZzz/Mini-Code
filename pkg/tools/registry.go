@@ -43,9 +43,9 @@ func init() {
 	register("git_log", "查看 Git 提交历史", GitLogArguments{}, GitLog)
 
 	// 记忆工具
-	register("remember", "记住一个事实到长期记忆（project/user/global 三种范围）", RememberArguments{}, Remember)
-	register("forget", "删除一条长期记忆（通过 remember 返回的 ID）", ForgetArguments{}, Forget)
-	register("recall", "从长期记忆中检索相关信息", RecallArguments{}, Recall)
+	register("remember", "写入或更新一条跨会话的自动记忆（每条一个文件，并同步 MEMORY.md 索引）", RememberArguments{}, Remember)
+	register("forget", "按名称删除一条自动记忆", ForgetArguments{}, Forget)
+	register("recall", "检索自动记忆：按 name 读全文，按 query 关键词搜索，都不填则列出全部", RecallArguments{}, Recall)
 
 	// Agent 调度工具
 	registerCtx("dispatch_agent", "调用专化子 Agent 执行子任务（reviewer 或 researcher）", DispatchAgentArguments{}, DispatchAgentContext)

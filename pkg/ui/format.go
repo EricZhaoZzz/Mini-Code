@@ -338,6 +338,10 @@ func HelpPanel() string {
   new, n         清空会话上下文
   reset, r       重置对话历史
   resume         恢复上次退出前的会话（每次任务结束自动保存）
+  memory, mem    查看已加载的指令文件与自动记忆
+  memory edit [user|project|local|auto]  编辑指令文件或打开自动记忆目录
+  # <内容>       把一行内容追加到指令文件（询问写入哪一级）
+  init           分析代码库并生成/改进项目指令文件
   exit, q        退出程序
 
 提示:

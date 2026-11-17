@@ -4,20 +4,52 @@ import (
 	"fmt"
 	"mini-code/pkg/memory"
 	"strings"
+	"sync"
 )
 
-var globalMemoryStore *memory.Store
+var (
+	memoryMu  sync.RWMutex
+	memoryCtx *memory.Context
+)
 
-// SetMemoryStore 注入 Memory Store（由 main.go 在启动时调用）
-func SetMemoryStore(store *memory.Store) {
-	globalMemoryStore = store
+// SetMemory 注入记忆上下文（由 main.go 在启动时调用）；传 nil 关闭记忆工具。
+func SetMemory(ctx *memory.Context) {
+	memoryMu.Lock()
+	defer memoryMu.Unlock()
+	memoryCtx = ctx
+}
+
+func currentMemory() *memory.Context {
+	memoryMu.RLock()
+	defer memoryMu.RUnlock()
+	return memoryCtx
+}
+
+func autoMemory() (*memory.AutoMemory, error) {
+	if m := currentMemory(); m != nil && m.Auto != nil {
+		return m.Auto, nil
+	}
+	return nil, fmt.Errorf("记忆未初始化")
+}
+
+// withLazyInstructions 在文件工具结果末尾附上因访问 absPath 而新加载的子目录指令与条件规则。
+func withLazyInstructions(absPath string, result string) string {
+	m := currentMemory()
+	if m == nil {
+		return result
+	}
+	if extra := m.Lazy.OnFileAccess(absPath); extra != "" {
+		return result + "\n\n" + extra
+	}
+	return result
 }
 
 // RememberArguments remember 工具参数
 type RememberArguments struct {
-	Content string   `json:"content" validate:"required" jsonschema:"required" jsonschema_description:"要记住的事实，自然语言描述"`
-	Scope   string   `json:"scope" validate:"required" jsonschema:"required" jsonschema_description:"记忆范围：project（当前项目）| user（用户偏好）| global（通用知识）"`
-	Tags    []string `json:"tags" jsonschema_description:"可选标签，便于检索"`
+	Name        string `json:"name" validate:"required" jsonschema:"required" jsonschema_description:"记忆的唯一名称，小写 kebab-case（如 prefer-pnpm）；与已有记忆同名即覆盖更新"`
+	Description string `json:"description" validate:"required" jsonschema:"required" jsonschema_description:"一行摘要，写入 MEMORY.md 索引，用于以后判断相关性"`
+	Type        string `json:"type" validate:"required" jsonschema:"required,enum=user,enum=feedback,enum=project,enum=reference" jsonschema_description:"user=用户信息与偏好；feedback=对你工作方式的纠正/认可；project=推导不出的项目背景与约束；reference=外部资源指针"`
+	Content     string `json:"content" validate:"required" jsonschema:"required" jsonschema_description:"记忆正文；feedback/project 类型附 **Why:** 与 **How to apply:** 两行"`
 }
 
 // Remember 工具执行函数
@@ -26,21 +58,24 @@ func Remember(args interface{}) (interface{}, error) {
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
 	}
-	if globalMemoryStore == nil {
-		return nil, fmt.Errorf("memory store 未初始化")
+	auto, err := autoMemory()
+	if err != nil {
+		return nil, err
 	}
-
-	workspace, _ := workspaceRoot()
-	id, err := globalMemoryStore.Remember(params.Content, params.Scope, workspace, params.Tags)
+	path, updated, err := auto.Save(params.Name, params.Description, params.Type, params.Content)
 	if err != nil {
 		return nil, fmt.Errorf("保存记忆失败: %w", err)
 	}
-	return fmt.Sprintf("已记住（ID: %d）: %s", id, params.Content), nil
+	verb := "已记住"
+	if updated {
+		verb = "已更新记忆"
+	}
+	return fmt.Sprintf("%s %s（%s）", verb, params.Name, path), nil
 }
 
 // ForgetArguments forget 工具参数
 type ForgetArguments struct {
-	MemoryID int64 `json:"memory_id" validate:"required" jsonschema:"required" jsonschema_description:"要删除的记忆 ID（由 remember 工具返回）"`
+	Name string `json:"name" validate:"required" jsonschema:"required" jsonschema_description:"要删除的记忆名称（MEMORY.md 索引中的 name）"`
 }
 
 // Forget 工具执行函数
@@ -49,19 +84,20 @@ func Forget(args interface{}) (interface{}, error) {
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
 	}
-	if globalMemoryStore == nil {
-		return nil, fmt.Errorf("memory store 未初始化")
+	auto, err := autoMemory()
+	if err != nil {
+		return nil, err
 	}
-	if err := globalMemoryStore.Forget(params.MemoryID); err != nil {
+	if err := auto.Delete(params.Name); err != nil {
 		return nil, fmt.Errorf("删除记忆失败: %w", err)
 	}
-	return fmt.Sprintf("已删除记忆 ID: %d", params.MemoryID), nil
+	return fmt.Sprintf("已删除记忆 %s", params.Name), nil
 }
 
 // RecallArguments recall 工具参数
 type RecallArguments struct {
-	Query string `json:"query" validate:"required" jsonschema:"required" jsonschema_description:"自然语言检索词"`
-	Scope string `json:"scope" jsonschema_description:"限定检索范围：project | user | global，不填则全局搜索"`
+	Name  string `json:"name,omitempty" jsonschema_description:"读取指定名称记忆的完整内容"`
+	Query string `json:"query,omitempty" jsonschema_description:"关键词检索（空格分隔多个词）；name 与 query 都不填时列出全部记忆"`
 }
 
 // Recall 工具执行函数
@@ -70,22 +106,31 @@ func Recall(args interface{}) (interface{}, error) {
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
 	}
-	if globalMemoryStore == nil {
-		return nil, fmt.Errorf("memory store 未初始化")
+	auto, err := autoMemory()
+	if err != nil {
+		return nil, err
 	}
 
-	workspace, _ := workspaceRoot()
-	results, err := globalMemoryStore.Recall(params.Query, params.Scope, workspace, 10)
+	if name := strings.TrimSpace(params.Name); name != "" {
+		content, err := auto.Read(name)
+		if err != nil {
+			return nil, err
+		}
+		return content, nil
+	}
+
+	entries, err := auto.Search(params.Query)
 	if err != nil {
 		return nil, fmt.Errorf("检索记忆失败: %w", err)
 	}
-	if len(results) == 0 {
+	if len(entries) == 0 {
 		return "未找到相关记忆", nil
 	}
 
 	var sb strings.Builder
-	for _, r := range results {
-		sb.WriteString(fmt.Sprintf("[ID:%d][%s] %s\n", r.ID, r.Scope, r.Content))
+	for _, e := range entries {
+		fmt.Fprintf(&sb, "- %s [%s] — %s\n", e.Name, e.Type, e.Description)
 	}
-	return strings.TrimSpace(sb.String()), nil
+	sb.WriteString("\n用 recall(name=...) 查看完整内容")
+	return sb.String(), nil
 }

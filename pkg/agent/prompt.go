@@ -5,7 +5,6 @@ import (
 	"mini-code/pkg/memory"
 	"mini-code/pkg/sandbox"
 	"mini-code/pkg/tools"
-	"os"
 	"runtime"
 	"strings"
 )
@@ -16,7 +15,7 @@ func BuildSystemPrompt() string {
 }
 
 // BuildSystemPromptWithMemory 构建带记忆的基础系统提示。
-func BuildSystemPromptWithMemory(memStore *memory.Store) string {
+func BuildSystemPromptWithMemory(mem *memory.Context) string {
 	osName := runtime.GOOS
 	var shellHint string
 	switch osName {
@@ -80,7 +79,8 @@ func BuildSystemPromptWithMemory(memStore *memory.Store) string {
 - git_status / git_diff 用于确认当前改动。
 
 ### 记忆与子 Agent
-- 开工前可用 recall 查询项目约定；remember 只记录稳定、可复用的决策。
+- 用户与项目指令、自动记忆索引附在本提示末尾；需要某条记忆的全文时用 recall。
+- 访问子目录时，工具结果末尾可能附带该目录的指令（<system-reminder>），同样必须遵守。
 - 独立的审查或调研子任务可用 dispatch_agent 交给 reviewer / researcher。
 
 ### 并发
@@ -93,13 +93,7 @@ func BuildSystemPromptWithMemory(memStore *memory.Store) string {
 
 	basePrompt += sandboxPromptSection()
 
-	if memStore != nil {
-		workspace, _ := os.Getwd()
-		suffix := memStore.BuildPromptSuffix(workspace)
-		if suffix != "" {
-			basePrompt += suffix
-		}
-	}
+	basePrompt += mem.PromptSection()
 
 	return basePrompt
 }

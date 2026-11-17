@@ -5,70 +5,124 @@ import (
 	"encoding/json"
 	"mini-code/pkg/memory"
 	"mini-code/pkg/tools"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func setupMemoryTools(t *testing.T) *memory.Store {
-	dir := t.TempDir()
-	store, err := memory.Open(
-		filepath.Join(dir, "memory.db"),
-		filepath.Join(dir, "project.db"),
-	)
+func setupMemoryTools(t *testing.T) *memory.Context {
+	t.Helper()
+	mem, err := memory.NewContext(t.TempDir(), t.TempDir())
 	if err != nil {
-		t.Fatalf("Open store: %v", err)
+		t.Fatalf("NewContext: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
-	tools.SetMemoryStore(store) // 注入 store 到工具层
-	return store
+	tools.SetMemory(mem)
+	t.Cleanup(func() { tools.SetMemory(nil) })
+	return mem
 }
 
-func TestRememberTool_StoresAndReturnsID(t *testing.T) {
-	setupMemoryTools(t)
+func runTool(t *testing.T, name string, args map[string]interface{}) (string, error) {
+	t.Helper()
+	raw, _ := json.Marshal(args)
+	result, err := tools.Executors[name](context.Background(), string(raw))
+	s, _ := result.(string)
+	return s, err
+}
 
-	args, _ := json.Marshal(map[string]interface{}{
-		"content": "使用 Go 1.22",
-		"scope":   "project",
+func TestRememberTool_WritesFileAndIndex(t *testing.T) {
+	mem := setupMemoryTools(t)
+
+	_, err := runTool(t, "remember", map[string]interface{}{
+		"name": "go-version", "description": "项目使用 Go 1.22", "type": "project", "content": "使用 Go 1.22",
 	})
-
-	result, err := tools.Executors["remember"](context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
+	if _, err := os.Stat(filepath.Join(mem.Auto.Dir(), "go-version.md")); err != nil {
+		t.Fatalf("memory file missing: %v", err)
+	}
+	if !strings.Contains(mem.Auto.Index(), "[go-version](go-version.md)") {
+		t.Errorf("index missing entry: %q", mem.Auto.Index())
+	}
+}
+
+func TestRememberTool_RejectsInvalidType(t *testing.T) {
+	setupMemoryTools(t)
+	_, err := runTool(t, "remember", map[string]interface{}{
+		"name": "x", "description": "d", "type": "global", "content": "c",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid type")
 	}
 }
 
 func TestForgetTool_DeletesMemory(t *testing.T) {
-	store := setupMemoryTools(t)
+	mem := setupMemoryTools(t)
+	mem.Auto.Save("temp-note", "临时记忆", "user", "临时记忆")
 
-	id, _ := store.Remember("临时记忆", "user", "", nil)
-	args, _ := json.Marshal(map[string]interface{}{"memory_id": id})
-
-	_, err := tools.Executors["forget"](context.Background(), string(args))
-	if err != nil {
+	if _, err := runTool(t, "forget", map[string]interface{}{"name": "temp-note"}); err != nil {
 		t.Fatalf("forget failed: %v", err)
 	}
-
-	results, _ := store.Recall("临时记忆", "", "", 10)
-	if len(results) != 0 {
-		t.Error("expected memory to be deleted")
+	if entries, _ := mem.Auto.List(); len(entries) != 0 {
+		t.Errorf("expected memory deleted, got %d", len(entries))
+	}
+	if strings.Contains(mem.Auto.Index(), "temp-note") {
+		t.Error("index still contains deleted entry")
 	}
 }
 
-func TestRecallTool_FindsRelevantMemory(t *testing.T) {
-	store := setupMemoryTools(t)
-	store.Remember("项目使用 PostgreSQL 数据库", "project", ".", nil)
+func TestRecallTool_SearchAndRead(t *testing.T) {
+	mem := setupMemoryTools(t)
+	mem.Auto.Save("db-choice", "数据库选型", "project", "项目使用 PostgreSQL 数据库")
 
-	args, _ := json.Marshal(map[string]interface{}{"query": "数据库"})
-	result, err := tools.Executors["recall"](context.Background(), string(args))
+	out, err := runTool(t, "recall", map[string]interface{}{"query": "postgresql"})
+	if err != nil || !strings.Contains(out, "db-choice") {
+		t.Fatalf("search: out=%q err=%v", out, err)
+	}
+
+	out, err = runTool(t, "recall", map[string]interface{}{"name": "db-choice"})
+	if err != nil || !strings.Contains(out, "PostgreSQL") {
+		t.Fatalf("read: out=%q err=%v", out, err)
+	}
+}
+
+func TestReadFile_InjectsSubdirInstructionsOnce(t *testing.T) {
+	root := t.TempDir()
+	setWorkspaceRootForTest(t, root)
+	mem, err := memory.NewContext(t.TempDir(), root)
 	if err != nil {
-		t.Fatalf("recall failed: %v", err)
+		t.Fatal(err)
 	}
-	// Executors 返回 interface{}，转为字符串比较
-	resultStr, ok := result.(string)
-	if !ok || resultStr == "" || resultStr == "未找到相关记忆" {
-		t.Errorf("expected non-empty recall result, got: %v", result)
+	tools.SetMemory(mem)
+	t.Cleanup(func() { tools.SetMemory(nil) })
+
+	os.MkdirAll(filepath.Join(root, "sub"), 0o755)
+	os.WriteFile(filepath.Join(root, "sub", "MINICODE.md"), []byte("子目录规则：禁止 panic"), 0o644)
+	os.WriteFile(filepath.Join(root, "sub", "a.go"), []byte("package sub\n"), 0o644)
+
+	first, err := runTool(t, "read_file", map[string]interface{}{"path": "sub/a.go"})
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !strings.Contains(first, "禁止 panic") {
+		t.Errorf("expected subdir instructions injected, got %q", first)
+	}
+	second, _ := runTool(t, "read_file", map[string]interface{}{"path": "sub/a.go"})
+	if strings.Contains(second, "禁止 panic") {
+		t.Error("instructions should be injected only once per session")
+	}
+}
+
+func setWorkspaceRootForTest(t *testing.T, dir string) {
+	t.Helper()
+	original, origErr := tools.CurrentWorkspaceRoot()
+	if err := tools.SetWorkspaceRoot(dir); err != nil {
+		t.Fatalf("SetWorkspaceRoot: %v", err)
+	}
+	t.Cleanup(func() {
+		if origErr == nil {
+			_ = tools.SetWorkspaceRoot(original)
+		}
+	})
 }

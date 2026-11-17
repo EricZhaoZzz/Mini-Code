@@ -82,6 +82,24 @@ func (c *CLIChannel) Confirm(ctx context.Context, prompt string) (bool, error) {
 	}
 }
 
+// Ask 在主循环中向用户提一个问题并返回下一行输入（不进入历史记录）。
+// 与 Confirm 相同，回答直接取自 messages 通道，不与 readline 争抢 stdin。
+func (c *CLIChannel) Ask(ctx context.Context, prompt string) (string, error) {
+	c.rl.DisableHistory()
+	defer c.rl.EnableHistory()
+
+	fmt.Fprintf(c.rl.Stdout(), "%s\n", ui.SprintColor(ui.Info, prompt))
+	select {
+	case msg, ok := <-c.messages:
+		if !ok {
+			return "", fmt.Errorf("输入已关闭")
+		}
+		return strings.TrimSpace(msg.Text), nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
 // IsAffirmative 判断用户回答是否为明确同意。
 func IsAffirmative(answer string) bool {
 	switch strings.ToLower(strings.TrimSpace(answer)) {

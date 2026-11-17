@@ -34,6 +34,7 @@ vendor/
 .DS_Store
 Thumbs.db
 .mini-code-history
+MINICODE.local.md
 
 # 本地 agent 工具目录（见 e2956d2）。
 # 必须写成 /.superpowers/：原先的 superpowers/ 未锚定，会连带命中

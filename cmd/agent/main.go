@@ -413,21 +413,9 @@ func runWorker(options workerOptions) error {
 		control = &workerControl{client: client}
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	globalDBPath := filepath.Join(homeDir, ".mini-code", "memory.db")
-	projectDBPath := filepath.Join(".", ".mini-code", "project.db")
-	os.MkdirAll(filepath.Dir(globalDBPath), 0o755)
-	os.MkdirAll(filepath.Dir(projectDBPath), 0o755)
-
-	memStore, err := memory.Open(globalDBPath, projectDBPath)
-	if err != nil {
-		ui.PrintError("Memory 初始化失败: %v", err)
-		memStore = nil
-	}
-	if memStore != nil {
-		defer memStore.Close()
-		tools.SetMemoryStore(memStore)
-	}
+	memCtx := setupMemory()
+	tools.SetMemory(memCtx)
+	defer tools.SetMemory(nil)
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          ui.SprintColor(ui.User, "➜ ") + ui.SprintColor(ui.Bold, ""),
@@ -446,7 +434,7 @@ func runWorker(options workerOptions) error {
 	defer rl.Close()
 
 	cliCh := cli.New(rl)
-	orch := orchestrator.New(memStore)
+	orch := orchestrator.New(memCtx)
 	defer orch.Close() // 停止后台 Session 清理协程
 	// 注入 provider 以启用上下文压缩（超限时生成历史摘要）
 	orch.SetProvider(p, modelID)
@@ -487,7 +475,7 @@ func runWorker(options workerOptions) error {
 		subAgent := newAgent(role)
 		subAgent.SetQuiet(true)
 		messages := []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: agent.BuildSystemPromptWithMemory(memStore)},
+			{Role: openai.ChatMessageRoleSystem, Content: agent.BuildSystemPromptWithMemory(memCtx)},
 			{Role: openai.ChatMessageRoleUser, Content: task},
 		}
 		reply, _, err := subAgent.Run(ctx, messages, nil)
@@ -562,6 +550,12 @@ func runWorker(options workerOptions) error {
 
 			if handleBuiltinCommand(msg.Text, orch, cliCh.ChannelID(), "local") {
 				continue
+			}
+			if handleMemoryCommand(ctx, msg.Text, orch, cliCh.Ask) {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(msg.Text), "init") {
+				msg.Text = initPrompt
 			}
 
 			taskCtx, taskCancel := context.WithCancel(ctx)
@@ -672,6 +666,10 @@ func getCompleter() *readline.PrefixCompleter {
 		readline.PcItem("n"),
 		readline.PcItem("history"),
 		readline.PcItem("resume"),
+		readline.PcItem("memory", readline.PcItem("edit",
+			readline.PcItem("user"), readline.PcItem("project"),
+			readline.PcItem("local"), readline.PcItem("auto"))),
+		readline.PcItem("init"),
 	)
 }
 
@@ -698,6 +696,7 @@ func handleBuiltinCommand(input string, orch *orchestrator.Orchestrator, channel
 		session := orch.GetOrCreateSession(channelID, userID)
 		session.Reset()
 		orch.RefreshSessionPrompt(channelID, userID)
+		orch.ResetLazyMemory()
 		ui.PrintSuccess("对话已重置，会话上下文已清空。")
 		return true
 
@@ -722,6 +721,31 @@ func handleBuiltinCommand(input string, orch *orchestrator.Orchestrator, channel
 	}
 
 	return false
+}
+
+// setupMemory 初始化记忆上下文并迁移旧版 SQLite 记忆；失败时返回 nil（记忆功能关闭）。
+func setupMemory() *memory.Context {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		ui.PrintError("Memory 初始化失败: %v", err)
+		return nil
+	}
+	workspace, err := tools.CurrentWorkspaceRoot()
+	if err != nil {
+		ui.PrintError("Memory 初始化失败: %v", err)
+		return nil
+	}
+	memCtx, err := memory.NewContext(homeDir, workspace)
+	if err != nil {
+		ui.PrintError("Memory 初始化失败: %v", err)
+		return nil
+	}
+	if n, err := memCtx.MigrateLegacy(); err != nil {
+		ui.PrintWarning("旧版记忆迁移失败: %v", err)
+	} else if n > 0 {
+		ui.PrintInfo("已将 %d 条旧版记忆迁移到 %s", n, memCtx.Auto.Dir())
+	}
+	return memCtx
 }
 
 func printWelcome(restored bool) {

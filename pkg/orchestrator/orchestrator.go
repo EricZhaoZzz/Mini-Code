@@ -46,7 +46,7 @@ type RestartRuntime interface {
 type Orchestrator struct {
 	sessions map[string]*Session
 	mu       sync.Mutex
-	memStore *memory.Store
+	mem      *memory.Context
 	router   *Router
 	restart  RestartRuntime
 
@@ -63,10 +63,10 @@ type Orchestrator struct {
 }
 
 // New 创建新的 Orchestrator
-func New(memStore *memory.Store) *Orchestrator {
+func New(mem *memory.Context) *Orchestrator {
 	o := &Orchestrator{
 		sessions: make(map[string]*Session),
-		memStore: memStore,
+		mem:      mem,
 		router:   NewRouter(),
 		stopCh:   make(chan struct{}),
 	}
@@ -126,6 +126,12 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 	session.mu.Unlock()
 
 	agnt := factory(agentType)
+
+	// 每次任务前从磁盘重建系统提示：指令文件被编辑、或上一轮 remember/forget
+	// 改了记忆索引后，无需重启即可生效；内容未变时提示词逐字相同，不影响前缀缓存。
+	if o.mem != nil {
+		session.UpdateSystemPrompt(o.buildSystemPrompt())
+	}
 
 	// 追加用户消息到 Session
 	session.AppendUserMessage(msg.Text)
@@ -197,6 +203,7 @@ func (o *Orchestrator) compactIfNeeded(ctx context.Context, session *Session) {
 		rebuilt = append(rebuilt, kept[1:]...)
 	}
 	session.ReplaceMessages(rebuilt)
+	o.ResetLazyMemory()
 
 	ui.PrintDim("  已压缩历史上下文（%d 条 → %d 条）", len(msgs), len(rebuilt))
 }
@@ -304,12 +311,20 @@ func (o *Orchestrator) buildSystemPrompt() string {
 
 // buildSystemPromptWithMemory 构建带记忆的系统提示
 func (o *Orchestrator) buildSystemPromptWithMemory() string {
-	return agent.BuildSystemPromptWithMemory(o.memStore)
+	return agent.BuildSystemPromptWithMemory(o.mem)
 }
 
-// GetMemoryStore 获取记忆存储
-func (o *Orchestrator) GetMemoryStore() *memory.Store {
-	return o.memStore
+// Memory 返回记忆上下文（可能为 nil）
+func (o *Orchestrator) Memory() *memory.Context {
+	return o.mem
+}
+
+// ResetLazyMemory 清空子目录指令的已注入记录。会话重置、恢复或压缩后，
+// 先前注入在工具结果里的指令已不在上下文中，需要允许再次注入。
+func (o *Orchestrator) ResetLazyMemory() {
+	if o.mem != nil {
+		o.mem.Lazy.Reset()
+	}
 }
 
 // RefreshSessionPrompt 刷新会话的系统提示（在记忆变化后调用）

@@ -138,5 +138,6 @@ func (o *Orchestrator) ResumeSession(channelID, userID string) (int, error) {
 	snapshot.ID = channelID + ":" + userID
 	o.RestoreSession(snapshot)
 	o.RefreshSessionPrompt(channelID, userID)
+	o.ResetLazyMemory()
 	return turns, nil
 }

@@ -52,10 +52,11 @@ func ReplaceInFile(args interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("写回文件失败: %w", err)
 	}
 
+	msg := fmt.Sprintf("已替换文件内容: %s", displayPath(targetPath))
 	if count > 1 {
-		return fmt.Sprintf("已替换文件内容: %s（共 %d 处）", displayPath(targetPath), count), nil
+		msg = fmt.Sprintf("已替换文件内容: %s（共 %d 处）", displayPath(targetPath), count)
 	}
-	return fmt.Sprintf("已替换文件内容: %s", displayPath(targetPath)), nil
+	return withLazyInstructions(targetPath, msg), nil
 }
 
 // matchLineEndings 让 old/new 的换行符与文件保持一致。
