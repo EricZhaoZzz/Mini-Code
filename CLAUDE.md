@@ -46,6 +46,7 @@ LLM Provider 二选一（`cmd/agent/main.go`）：
 | `LM_DEBUG` | 非空即写 `lm_debug.log`（已 gitignore，可能很大） |
 | `LM_MAX_TURNS` | 单次任务最大工具轮次，默认 50，0=不限 |
 | `LM_CONTEXT_BUDGET` | 上下文 token 预算，默认 96000 |
+| `LM_MAX_RETRIES` | LLM 请求遇 429/5xx/连接错误时的最大重试次数，默认 3，0=关闭；流开始输出后不重试 |
 | `LM_SHELL_TIMEOUT` | `run_shell` 超时秒数，默认 120 |
 | `LM_SHELL_STRICT` | `=1` 时 `run_shell` 只允许白名单命令 |
 | `LM_SANDBOX_STRICT` | `=1` 且 OS 沙箱不可用时拒绝执行 `run_shell`（⚠️ Windows 上等于禁用 shell） |

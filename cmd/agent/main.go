@@ -13,6 +13,7 @@ import (
 	"mini-code/pkg/provider"
 	"mini-code/pkg/sandbox"
 	"mini-code/pkg/supervisor"
+	"mini-code/pkg/textutil"
 	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
 	"os"
@@ -391,6 +392,17 @@ func runWorker(options workerOptions) error {
 		cfg.BaseURL = baseURL
 		p = provider.NewOpenAIProvider(cfg, modelID)
 	}
+
+	// 限流（429）与网关 5xx 在长任务中很常见，单次失败就中断整个任务代价太高。
+	// 包在最外层，主 Agent、子 Agent 与上下文压缩共用同一策略。
+	retryCfg := provider.DefaultRetryConfig()
+	retryCfg.MaxRetries = provider.MaxRetriesFromEnv()
+	retryCfg.OnRetry = func(attempt int, wait time.Duration, err error) {
+		ui.ClearLine() // 覆盖可能存在的「等待响应」状态行
+		ui.PrintWarning("模型请求失败，%.1fs 后第 %d/%d 次重试: %s",
+			wait.Seconds(), attempt, retryCfg.MaxRetries, textutil.TruncateWithEllipsis(err.Error(), 120))
+	}
+	p = provider.WithRetry(p, retryCfg)
 
 	var control *workerControl
 	if options.controlAddr != "" && options.workerID != "" {
