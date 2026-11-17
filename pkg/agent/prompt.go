@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"mini-code/pkg/memory"
+	"mini-code/pkg/sandbox"
+	"mini-code/pkg/tools"
 	"os"
 	"runtime"
 	"strings"
@@ -35,15 +37,16 @@ func BuildSystemPromptWithMemory(memStore *memory.Store) string {
 2. 先理解项目，再做结论或修改。
 3. 结论尽量基于已读代码、搜索结果或工具输出，避免空泛推测。
 4. 保持改动最小且与现有风格一致。
-5. 除非用户明确要求，否则不要主动执行 lint、build、commit。
+5. 除非用户明确要求，否则不要主动执行 lint、build、commit（运行与改动相关的测试不受此限）。
 
 ## 核心工作流程
 
-### 1. 理解项目（必须首先执行）
+### 1. 理解项目（修改前必须执行）
 在开始任何代码修改之前，你必须先理解项目结构：
 - 使用 list_files 浏览目录结构，了解项目组织方式
 - 使用 search_in_files 搜索关键代码，定位相关模块
 - 使用 read_file 阅读关键文件，理解现有实现
+纯问答或上下文已足够时，可直接回答，无需先遍历目录。
 
 ### 2. 分析需求
 - 仔细理解用户的任务目标
@@ -69,21 +72,26 @@ func BuildSystemPromptWithMemory(memStore *memory.Store) string {
   且只拦截了少数不可逆命令（见 shell_guard.go）。仅在确有需要时使用，
   不要把 shell 当作绕过文件工具路径限制的手段。
 - 不要在用户未明确授权时，对工作区外的路径执行读写、删除或修改。
-- run_shell 有执行超时（默认 120 秒），超时会被强制终止。
+- run_shell 有执行超时（默认 120 秒），超时会被强制终止；命令应简洁明确，避免复杂管道，并检查其输出和错误。
 
-### Shell 命令
-- 仅在必要时使用 shell 命令
-- 命令应该简洁明确，避免复杂的管道操作
-- 注意处理命令的输出和错误
+### 搜索与外部信息
+- search_in_files 的 query 是字面文本匹配，可用 path 限定范围提高效率。
+- web_search 仅用于仓库内查不到的外部信息。
+- git_status / git_diff 用于确认当前改动。
 
-### 搜索操作
-- 使用 search_in_files 时，query 应该精确匹配目标文本
-- 可以通过 path 参数限定搜索范围，提高效率
+### 记忆与子 Agent
+- 开工前可用 recall 查询项目约定；remember 只记录稳定、可复用的决策。
+- 独立的审查或调研子任务可用 dispatch_agent 交给 reviewer / researcher。
+
+### 并发
+- 同一轮中互不依赖的工具调用请一并发出，它们会并发执行。
 
 ## 沟通规范
 1. 清楚说明你正在执行的操作和原因
 2. 如果遇到问题，描述阻塞点和下一步建议
 3. 完成任务后简要总结修改、验证和剩余风险`, osName, shellHint)
+
+	basePrompt += sandboxPromptSection()
 
 	if memStore != nil {
 		workspace, _ := os.Getwd()
@@ -94,6 +102,37 @@ func BuildSystemPromptWithMemory(memStore *memory.Store) string {
 	}
 
 	return basePrompt
+}
+
+// sandboxPromptSection 按当前平台的真实能力生成沙箱状态说明。
+//
+// 为什么不能写死：提示词若宣称「shell 只能访问工作区」，而实际平台
+// 并没有 OS 层强制（Windows），模型就会在一个不成立的假设下行动。
+// 提示词必须与 GetStatus 的返回值保持一致。
+func sandboxPromptSection() string {
+	if reason := tools.SandboxDisabledReason(); reason != "" {
+		return fmt.Sprintf("\n\n## 沙箱状态\n⚠️ %s\n"+
+			"shell 命令能访问工作区之外的任何文件，请自行避免触碰敏感路径。\n", reason)
+	}
+
+	cfg := tools.CurrentSandboxConfig()
+	if cfg.WorkspaceRoot == "" {
+		if root, err := tools.CurrentWorkspaceRoot(); err == nil {
+			cfg.WorkspaceRoot = root
+		}
+	}
+
+	st := sandbox.GetStatus(cfg)
+	if st.Available {
+		return fmt.Sprintf("\n\n## 沙箱状态\n"+
+			"当前平台启用 %s OS 级文件沙箱：shell 命令只能在工作区内读写，"+
+			"访问其他路径会被内核拒绝。\n", st.Mechanism)
+	}
+
+	return fmt.Sprintf("\n\n## 沙箱状态\n"+
+		"当前平台无 OS 级文件沙箱（%s）。\n"+
+		"shell 命令能访问工作区之外的任何文件，仅有部分危险命令被黑名单拦截。\n"+
+		"请勿把 shell 用于访问敏感路径。\n", st.Reason)
 }
 
 func combineSystemPrompt(basePrompt, rolePrompt string) string {

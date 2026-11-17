@@ -453,6 +453,14 @@ go test ./pkg/agent -race
 
 ### Task 1.3: 给 run_shell 加沙箱策略
 
+> **⚠️ 本节已被取代（2026-10-21）**：本 Task 当时的做法是「命令黑名单/白名单」，
+> 它只防误操作、不构成文件边界。真正的分层加固见
+> `docs/superpowers/plans/2026-10-07-sandbox-hardening.md`
+> （L1 路径边界 + L2 OS 强制 + L3 审批审计）。
+> 其中 **NTFS junction 越权**是该文档记录的 P0 可利用漏洞，
+> 已由 `pkg/tools/workspace_windows.go` 的句柄级校验修复；
+> 黑/白名单守卫降级为便捷拦截，保留于 `pkg/tools/shell_guard.go`。
+
 **Files:**
 - Create: `pkg/tools/shell_guard.go`
 - Create: `pkg/tools/shell_guard_test.go`

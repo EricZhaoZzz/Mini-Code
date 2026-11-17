@@ -216,7 +216,8 @@ func (o *Orchestrator) summarize(ctx context.Context, session *Session, dropped 
 	resp, err := o.provider.Chat(sumCtx, openai.ChatCompletionRequest{
 		Model: o.model,
 		Messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: prompt},
+			// 以 user 角色发送：仅含 system 消息的请求会被部分 OpenAI 兼容网关拒绝
+			{Role: openai.ChatMessageRoleUser, Content: prompt},
 		},
 	})
 	if err != nil || len(resp.Choices) == 0 {

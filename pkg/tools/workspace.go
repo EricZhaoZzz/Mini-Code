@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -82,6 +83,11 @@ func resolveWorkspacePath(path string) (string, error) {
 		candidate = "."
 	}
 
+	// 前置校验：拒绝带特殊语义、可绕过审计的路径形式（见 checkDangerousPath）
+	if err := checkDangerousPath(candidate); err != nil {
+		return "", err
+	}
+
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(root, candidate)
 	}
@@ -102,7 +108,62 @@ func resolveWorkspacePath(path string) (string, error) {
 		return "", fmt.Errorf("路径超出工作区: %s", path)
 	}
 
+	// 字符串校验通过后，再做句柄级校验。
+	//
+	// 为什么必须多这一步：NTFS junction 是 reparse point 而非符号链接，
+	// os.Lstat 返回的 Mode 不含 ModeSymlink，EvalSymlinks 又无法解析
+	// junction 内部的文件，因此字符串层面的 Rel 判断会把它当成普通子目录放行，
+	// 而实际 os.ReadFile/WriteFile 时 NTFS 会跟随 junction 到达工作区外。
+	escapes, err := pathEscapesRoot(root, resolvedCandidate)
+	if err != nil || escapes {
+		return "", fmt.Errorf("路径超出工作区: %s", path)
+	}
+
 	return resolvedCandidate, nil
+}
+
+// checkDangerousPath 拒绝带特殊语义的危险路径形式。
+//
+// 每一项都有明确定义的危险语义，不是「看起来可疑」：
+//   - NUL 字节：Go 的 os 包在 NUL 处截断，会使校验路径与实际访问路径不一致
+//   - UNC（\\server\share）：跨网络边界，Rel 的 volume 判断可能失效
+//   - device（\\.\PhysicalDrive0）：直接访问设备，绕过一切文件语义
+//   - 冒号（ADS）：file.txt:stream 是隐藏数据流，ListFiles 不会列出，可绕过内容审计
+//
+// 注意 `\\?\` 是例外：它是 Windows 的扩展长度前缀，语义等同普通绝对路径，
+// 必须放行——否则会误杀合法的超长路径（GetFinalPathNameByHandle 也返回这种形式）。
+func checkDangerousPath(path string) error {
+	if strings.ContainsRune(path, 0) {
+		return fmt.Errorf("路径不允许包含 NUL 字符")
+	}
+
+	candidate := path
+	if runtime.GOOS == "windows" && strings.HasPrefix(candidate, `\\?\`) {
+		candidate = candidate[4:]
+	}
+
+	if strings.HasPrefix(candidate, `\\`) || strings.HasPrefix(candidate, "//") {
+		return fmt.Errorf("路径不允许使用 UNC 或设备路径前缀")
+	}
+
+	// Windows 上冒号只用于盘符与 ADS。盘符形如 C:\，冒号下标为 1；
+	// 其它位置的冒号一律视为试图访问备用数据流。
+	if runtime.GOOS == "windows" {
+		if idx := strings.Index(candidate, ":"); idx > 1 {
+			return fmt.Errorf("路径不允许包含冒号（可能试图访问 NTFS 备用数据流）")
+		}
+	}
+
+	return nil
+}
+
+// isWithinRoot 判断 path 是否位于 root 之内（含 root 自身）。
+func isWithinRoot(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func displayPath(path string) string {

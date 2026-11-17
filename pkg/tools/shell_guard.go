@@ -38,6 +38,12 @@ var shellDenylist = []struct {
 	// 管道执行远程脚本
 	{regexp.MustCompile(`(?i)\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba)?sh`), "管道执行远程脚本"},
 	{regexp.MustCompile(`(?i)\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(python|perl|ruby)\b`), "管道执行远程脚本"},
+	// 创建链接 / 硬链接：可用于制造 reparse point 绕过路径校验。
+	//
+	// 注意这只是便捷拦截，不是唯一防线 —— 文件工具的句柄级校验
+	// （见 workspace_windows.go）才是真正的边界。
+	{regexp.MustCompile(`(?i)\b(mklink|fsutil\s+hardlink\s+create)\b`), "不允许创建链接"},
+	{regexp.MustCompile(`(?i)\bnew-item\b.*-itemtype\s+(hardlink|junction|symboliclink)\b`), "不允许创建链接"},
 }
 
 // shellAllowlist 严格模式（LM_SHELL_STRICT=1）下的命令白名单。

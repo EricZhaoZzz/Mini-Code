@@ -13,12 +13,12 @@ func init() {
 	Executors = make(map[string]ToolExecutor)
 
 	// 文件操作
-	register("write_file", "在本地创建或修改文件", WriteFileArguments{}, WriteFile)
+	register("write_file", "创建文件或整体覆盖已有文件；局部修改请用 replace_in_file", WriteFileArguments{}, WriteFile)
 	register("read_file", "读取本地文件", ReadFileArguments{}, ReadFile)
 	register("list_files", "列出目录下的文件", ListFilesArguments{}, ListFiles)
-	register("search_in_files", "在目录下搜索文本", SearchInFilesArguments{}, SearchInFiles)
-	register("run_shell", "运行 shell 命令", RunShellArguments{}, RunShell)
-	register("replace_in_file", "在文件中局部替换文本，只替换第一个匹配项", ReplaceInFileArguments{}, ReplaceInFile)
+	register("search_in_files", "在目录下按字面文本搜索（非正则）", SearchInFilesArguments{}, SearchInFiles)
+	register("run_shell", "在工作区目录运行 shell 命令（默认 120 秒超时；可访问工作区外，勿用于绕过路径限制）", RunShellArguments{}, RunShell)
+	register("replace_in_file", "在文件中局部替换文本：old 必须与原文逐字一致，只替换第一个匹配项", ReplaceInFileArguments{}, ReplaceInFile)
 
 	// 文件操作扩展
 	register("rename_file", "重命名/移动文件或目录", RenameFileArguments{}, RenameFile)

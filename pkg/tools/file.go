@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"mini-code/pkg/sandbox"
+
 	"github.com/charlievieth/fastwalk"
 	gitignore "github.com/denormal/go-gitignore"
 	"github.com/gabriel-vasile/mimetype"
@@ -248,6 +250,11 @@ func RunShell(args interface{}) (interface{}, error) {
 	// 安全策略：黑名单常开，LM_SHELL_STRICT=1 时切换为白名单。
 	// 注意这只能防误操作，run_shell 本身不限制路径（见 shell_guard.go 说明）。
 	if err := CheckShellCommand(command); err != nil {
+		sandbox.Log(sandbox.AuditEvent{
+			Command: command,
+			Allowed: false,
+			Reason:  err.Error(),
+		})
 		return nil, err
 	}
 
@@ -256,6 +263,42 @@ func RunShell(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
+	cfg := sandboxCfg
+	cfg.WorkspaceRoot = root
+	if len(cfg.ExtraWritableRoots) == 0 {
+		cfg.ExtraWritableRoots = append(sandbox.DefaultWritableRoots(), extraWritableRootsFromEnv()...)
+	} else {
+		cfg.ExtraWritableRoots = append(cfg.ExtraWritableRoots, extraWritableRootsFromEnv()...)
+	}
+	if len(cfg.ReadOnlyPaths) == 0 {
+		cfg.ReadOnlyPaths = sandbox.DefaultReadOnlyPaths()
+	}
+
+	status := sandbox.GetStatus(cfg)
+	mechanism := status.Mechanism
+	if !sandboxEnabled() {
+		mechanism = "disabled"
+	}
+
+	// fail-closed：严格模式下沙箱起不来必须硬失败，
+	// 绝不能「假装没事」继续无保护地执行。
+	if cfg.Strict {
+		if !status.Available {
+			return nil, fmt.Errorf("严格沙箱模式（LM_SANDBOX_STRICT=1）下沙箱不可用，已拒绝执行: %s", status.Reason)
+		}
+		if !sandboxEnabled() {
+			return nil, fmt.Errorf("严格沙箱模式（LM_SANDBOX_STRICT=1）与 LM_SANDBOX=0 冲突，已拒绝执行")
+		}
+	}
+
+	// 审计：记录被放行的命令（无论最终执行是否成功）
+	sandbox.Log(sandbox.AuditEvent{
+		Command:   command,
+		Dir:       root,
+		Allowed:   true,
+		Mechanism: mechanism,
+	})
+
 	// 超时保护：防止长驻命令卡死整个会话。
 	//
 	// go-cmd v1.4.3 不支持 CommandContext（设置 exec.Cmd.Cancel 会直接报错），
@@ -263,6 +306,11 @@ func RunShell(args interface{}) (interface{}, error) {
 	// 可能连带杀掉调用方自身的进程。因此这里显式要求独立进程组，
 	// 让超时终止只影响这条命令，不波及其他进程。
 	timeout := shellTimeout()
+
+	// 沙箱注入只能在 BeforeExec 里做：go-cmd 不暴露底层 *exec.Cmd，
+	// 而该回调是唯一能拿到它的时机。回调在父进程、Start 之前同步执行，
+	// 因此这里只能改写命令，不能真的收紧（收紧会连累主进程，见 sandbox 包说明）。
+	var sandboxWrapErr error
 	options := cmd.Options{
 		Buffered:       true,
 		CombinedOutput: false,
@@ -270,6 +318,12 @@ func RunShell(args interface{}) (interface{}, error) {
 			func(execCmd *exec.Cmd) {
 				execCmd.Dir = root
 				isolateProcessGroup(execCmd)
+				if !sandboxEnabled() {
+					return
+				}
+				if err := sandbox.Wrap(context.Background(), execCmd, cfg); err != nil {
+					sandboxWrapErr = err
+				}
 			},
 		},
 	}
@@ -283,24 +337,44 @@ func RunShell(args interface{}) (interface{}, error) {
 
 	statusChan := runner.Start()
 
+	// 沙箱包装失败时命令已经启动，必须终止它 —— 不能让一条
+	// 「本应受沙箱约束」的命令在无保护状态下跑下去。
+	if sandboxWrapErr != nil {
+		go func() {
+			_ = terminateRunner(runner)
+		}()
+		return nil, fmt.Errorf("沙箱不可用，已终止命令: %w", sandboxWrapErr)
+	}
+
 	// 等待结果：正常结束，或超时后返回已累积的部分输出。
 	// 即便终止失败也不能无限期阻塞，因此这里用 select 而不是裸接收。
-	var status cmd.Status
+	var cmdStatus cmd.Status
 	var timedOut bool
 	select {
-	case status = <-statusChan:
+	case cmdStatus = <-statusChan:
 	case <-time.After(timeout):
 		timedOut = true
 		// 尽力终止，但不阻塞等待它真的结束
 		go func() {
 			_ = terminateRunner(runner)
 		}()
-		status = runner.Status()
+		cmdStatus = runner.Status()
 	}
 
-	output := strings.Join(status.Stdout, "\n")
-	if len(status.Stderr) > 0 {
-		stderrText := strings.Join(status.Stderr, "\n")
+	// 审计：补齐执行结果，便于事后追溯
+	sandbox.Log(sandbox.AuditEvent{
+		Command:   command,
+		Dir:       root,
+		Allowed:   true,
+		Mechanism: mechanism,
+		ExitCode:  cmdStatus.Exit,
+		PID:       cmdStatus.PID,
+		TimedOut:  timedOut,
+	})
+
+	output := strings.Join(cmdStatus.Stdout, "\n")
+	if len(cmdStatus.Stderr) > 0 {
+		stderrText := strings.Join(cmdStatus.Stderr, "\n")
 		if output != "" {
 			output += "\n"
 		}
@@ -314,14 +388,14 @@ func RunShell(args interface{}) (interface{}, error) {
 		}
 		return output, fmt.Errorf("命令执行超时（超过 %s），已终止", timeout)
 	}
-	if errors.Is(status.Error, context.DeadlineExceeded) {
+	if errors.Is(cmdStatus.Error, context.DeadlineExceeded) {
 		return output, fmt.Errorf("命令执行超时（超过 %s），已终止", timeout)
 	}
-	if status.Error != nil {
-		return output, fmt.Errorf("命令执行错误: %w", status.Error)
+	if cmdStatus.Error != nil {
+		return output, fmt.Errorf("命令执行错误: %w", cmdStatus.Error)
 	}
-	if status.Exit != 0 {
-		return output, fmt.Errorf("命令执行错误: exit status %d", status.Exit)
+	if cmdStatus.Exit != 0 {
+		return output, fmt.Errorf("命令执行错误: exit status %d", cmdStatus.Exit)
 	}
 
 	return output, nil

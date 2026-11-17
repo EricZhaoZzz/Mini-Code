@@ -11,6 +11,7 @@ import (
 	"mini-code/pkg/memory"
 	"mini-code/pkg/orchestrator"
 	"mini-code/pkg/provider"
+	"mini-code/pkg/sandbox"
 	"mini-code/pkg/supervisor"
 	"mini-code/pkg/tools"
 	"mini-code/pkg/ui"
@@ -125,6 +126,16 @@ func main() {
 }
 
 func run() error {
+	// sandbox runner 子进程：由 run_shell 唤起，收紧文件边界后 exec 目标命令。
+	// 必须在任何初始化之前分派，否则子进程会把 supervisor/worker 的
+	// 整套环境（记忆库、控制通道）都建起来，白白浪费且可能写脏数据。
+	if sandbox.IsRunnerInvocation(os.Args) {
+		if err := sandbox.RunSandboxed(os.Args[1:]); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	options, isWorker, err := parseWorkerOptions(os.Args[1:])
 	if err != nil {
 		return err
@@ -167,6 +178,48 @@ func parseWorkerOptions(args []string) (workerOptions, bool, error) {
 	}
 
 	return options, isWorker, nil
+}
+
+// setupSandbox 初始化审计日志并把沙箱配置注入 run_shell。
+//
+// 只在真正支持 OS 沙箱的平台上谈「启用与否」；Windows 上 GetStatus
+// 恒为不可用，这里照实告知用户，不假装等价。
+func setupSandbox() {
+	root, err := tools.CurrentWorkspaceRoot()
+	if err != nil {
+		root = "."
+	}
+
+	cfg := tools.CurrentSandboxConfig()
+	cfg.WorkspaceRoot = root
+	cfg.Strict = os.Getenv("LM_SANDBOX_STRICT") == "1"
+
+	if len(cfg.ExtraWritableRoots) == 0 {
+		cfg.ExtraWritableRoots = sandbox.DefaultWritableRoots()
+	}
+	if len(cfg.ReadOnlyPaths) == 0 {
+		cfg.ReadOnlyPaths = sandbox.DefaultReadOnlyPaths()
+	}
+
+	tools.SetSandboxConfig(cfg)
+
+	if err := sandbox.InitAudit(root); err != nil {
+		ui.PrintError("审计日志初始化失败: %v", err)
+		return
+	}
+
+	st := sandbox.GetStatus(cfg)
+	if st.Available {
+		ui.PrintInfo("沙箱状态: %s 已启用", st.Mechanism)
+		return
+	}
+
+	// 不可用时不静默：明确告知用户当前只有 L1+L3 保护
+	if reason := tools.SandboxDisabledReason(); reason != "" {
+		ui.PrintInfo("沙箱状态: 未启用（%s）", reason)
+		return
+	}
+	ui.PrintInfo("沙箱状态: 当前平台无 OS 级文件沙箱（%s）", st.Reason)
 }
 
 func runSupervisor() error {
@@ -306,6 +359,11 @@ func runWorker(options workerOptions) error {
 	if err := tools.SetWorkspaceRoot("."); err != nil {
 		return fmt.Errorf("设置工作区根目录失败: %w", err)
 	}
+
+	// 初始化审计与沙箱：审计日志落在工作区内，
+	// 沙箱配置随后注入给 run_shell。
+	setupSandbox()
+	defer sandbox.CloseAudit()
 
 	pieAppID := os.Getenv("PIE_APP_ID")
 	pieAppSecret := os.Getenv("PIE_APP_SECRET")

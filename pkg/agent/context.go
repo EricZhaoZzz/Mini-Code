@@ -104,8 +104,8 @@ func NeedsCompaction(msgs []openai.ChatCompletionMessage, budget int) bool {
 // BuildCompactionSummaryPrompt 构造摘要提示词，要求模型输出结构化摘要。
 func BuildCompactionSummaryPrompt(dropped []openai.ChatCompletionMessage) string {
 	var b strings.Builder
-	b.WriteString("请把以下对话历史压缩成不超过 200 字的摘要，")
-	b.WriteString("保留关键决策、已修改的文件、遗留问题和下一步计划。\n")
+	b.WriteString("请把以下对话历史压缩成不超过 400 字的摘要。")
+	b.WriteString("必须保留：已修改的文件路径、关键决策及原因、未解决的问题或报错要点、下一步计划。\n")
 	b.WriteString("只输出摘要正文，不要加标题或解释。\n\n")
 
 	for _, m := range dropped {

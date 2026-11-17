@@ -183,6 +183,38 @@ Mini-Code 提供以下工具供 AI 助手使用：
 |------|------|
 | `run_shell` | 执行 shell 命令（Windows 使用 CMD，Linux/macOS 使用 Bash） |
 
+## 🔒 安全边界
+
+分三层，且刻意**不对称**——不追求三平台一致，诚实标注差异：
+
+| 层 | Windows | Linux | macOS |
+|---|---|---|---|
+| L1 路径校验 + 命令守卫 | ✓ | ✓ | ✓ |
+| **L2 OS 强制** | **✗ 无可行方案** | ✓ Landlock | ✓ Seatbelt |
+| L3 审批 + 审计 | ✓ | ✓ | ✓ |
+
+- **L1**：文件工具只能访问工作区内路径。已拦截 NTFS junction 越权（junction 是
+  reparse point，`Lstat` 查不到 `ModeSymlink`，故改用句柄真实路径判定）、
+  ADS（隐藏数据流，`list_files` 看不到）、UNC 与设备路径。
+- **L2**：Linux 用 Landlock（内核强制、零外部依赖），macOS 用 `sandbox-exec`
+  配合自定义 SBPL profile。沙箱起不来时**硬失败**，不静默降级。
+- **L3**：所有 `run_shell` 执行追加记录到 `<工作区>/.mini-code/audit.log`
+  （JSONL，含命令、工作目录、是否被拦截、退出码、PID）。
+
+⚠️ **Windows 上没有可行的低成本 OS 级文件沙箱**：Job Objects 根本不限制文件
+访问，AppContainer 要求事先穷举进程需要的每个能力，与 coding agent 开放的行为
+空间不匹配（OpenAI 在 Codex 上同样否决了这两条路）。因此 Windows 上
+`run_shell` **确实能访问工作区之外的文件**，只有黑名单拦截误操作。
+
+相关环境变量：
+
+| 变量 | 作用 |
+|------|------|
+| `LM_SANDBOX_STRICT` | =1 时若 OS 沙箱不可用则拒绝执行 `run_shell`（⚠️ Windows 上等于禁用 shell） |
+| `LM_SANDBOX` | =0 显式关闭 OS 级沙箱（逃生舱，启动时会打印提示） |
+| `LM_SANDBOX_WRITABLE` | 额外允许沙箱读写的目录（逗号分隔），默认自动取 `GOCACHE`/`GOMODCACHE`/`TMPDIR` |
+| `LM_SHELL_STRICT` | =1 时 `run_shell` 只允许白名单命令 |
+
 ### Git 操作
 
 | 工具 | 描述 |
