@@ -337,6 +337,7 @@ func HelpPanel() string {
   clear, cls     清除屏幕
   new, n         清空会话上下文
   reset, r       重置对话历史
+  resume         恢复上次退出前的会话（每次任务结束自动保存）
   exit, q        退出程序
 
 提示:

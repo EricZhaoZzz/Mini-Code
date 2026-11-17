@@ -57,6 +57,9 @@ type Orchestrator struct {
 	// stopCh 用于关闭后台 evictLoop；closeOnce 保证 Close 幂等
 	stopCh    chan struct{}
 	closeOnce sync.Once
+
+	// persistPath 非空时每次任务结束后把会话写入该文件（见 persist.go）
+	persistPath string
 }
 
 // New 创建新的 Orchestrator
@@ -135,7 +138,10 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 	session.SetCancel(cancel)
 	defer cancel()
 
-	if err := o.handleCLI(runCtx, session, agnt, ch); err != nil {
+	err := o.handleCLI(runCtx, session, agnt, ch)
+	// 出错或取消也要保存：已完成的工具调用（如写过的文件）同样需要能被恢复
+	o.persist(session)
+	if err != nil {
 		return err
 	}
 	return o.applyPendingRestart(session)

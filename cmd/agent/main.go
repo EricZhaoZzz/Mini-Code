@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"mini-code/pkg/agent"
@@ -451,6 +450,10 @@ func runWorker(options workerOptions) error {
 	defer orch.Close() // 停止后台 Session 清理协程
 	// 注入 provider 以启用上下文压缩（超限时生成历史摘要）
 	orch.SetProvider(p, modelID)
+	// 会话持久化：每次任务结束后保存，退出后可用 resume 命令恢复
+	if wd, err := os.Getwd(); err == nil {
+		orch.SetPersistPath(orchestrator.DefaultSessionPath(wd))
+	}
 
 	if options.snapshotPath != "" {
 		snapshot, err := loadSessionSnapshot(options.snapshotPath)
@@ -544,7 +547,7 @@ func runWorker(options workerOptions) error {
 	})
 	defer tools.SetConfirmHandler(nil)
 
-	printWelcome()
+	printWelcome(options.snapshotPath != "")
 	go cliCh.Start(ctx)
 
 	for {
@@ -613,16 +616,7 @@ func waitForProcess(process workerProcess, events chan<- processExit) {
 }
 
 func loadSessionSnapshot(path string) (orchestrator.SessionSnapshot, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return orchestrator.SessionSnapshot{}, fmt.Errorf("读取会话快照失败: %w", err)
-	}
-
-	var snapshot orchestrator.SessionSnapshot
-	if err := json.Unmarshal(data, &snapshot); err != nil {
-		return orchestrator.SessionSnapshot{}, fmt.Errorf("解析会话快照失败: %w", err)
-	}
-	return snapshot, nil
+	return orchestrator.LoadSnapshot(path)
 }
 
 func buildUpdatedBinary(workspaceRoot string) (string, error) {
@@ -677,6 +671,7 @@ func getCompleter() *readline.PrefixCompleter {
 		readline.PcItem("new"),
 		readline.PcItem("n"),
 		readline.PcItem("history"),
+		readline.PcItem("resume"),
 	)
 }
 
@@ -712,6 +707,15 @@ func handleBuiltinCommand(input string, orch *orchestrator.Orchestrator, channel
 		ui.PrintInfo("对话消息数: %d", count)
 		return true
 
+	case "resume":
+		turns, err := orch.ResumeSession(channelID, userID)
+		if err != nil {
+			ui.PrintWarning("无法恢复会话: %v", err)
+			return true
+		}
+		ui.PrintSuccess("已恢复上次的会话（%d 轮对话），可以直接继续", turns)
+		return true
+
 	case "version", "v":
 		ui.PrintInfo("Mini-Code v1.0")
 		return true
@@ -720,11 +724,20 @@ func handleBuiltinCommand(input string, orch *orchestrator.Orchestrator, channel
 	return false
 }
 
-func printWelcome() {
+func printWelcome(restored bool) {
 	fmt.Println(ui.WelcomeBanner())
 	fmt.Println()
-	ui.PrintDim("命令: help 显示帮助 | exit 退出程序")
+	ui.PrintDim("命令: help 显示帮助 | resume 恢复上次会话 | exit 退出程序")
 	ui.PrintDim("提示: 直接输入你的任务开始对话...")
+	// 热重启已自动恢复会话，无需再提示
+	if !restored {
+		if wd, err := os.Getwd(); err == nil {
+			if info, ok := orchestrator.InspectSavedSession(orchestrator.DefaultSessionPath(wd)); ok {
+				ui.PrintInfo("发现上次的会话（%d 轮对话，%s）：输入 resume 恢复",
+					info.Turns, info.LastSeen.Local().Format("01-02 15:04"))
+			}
+		}
+	}
 	fmt.Println()
 }
 

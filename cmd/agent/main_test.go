@@ -279,7 +279,7 @@ func TestLoadDotEnv_DontOverride(t *testing.T) {
 // TestPrintWelcome 测试欢迎信息输出
 func TestPrintWelcome(t *testing.T) {
 	output := captureOutput(func() {
-		printWelcome()
+		printWelcome(false)
 	})
 
 	// 验证欢迎信息包含关键内容

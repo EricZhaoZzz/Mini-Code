@@ -139,8 +139,9 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
 
 ## CLI 备注
 
-- 内置命令：`help/h/?`、`exit/quit/q`、`clear/cls`、`reset/r/new/n`、`history/hist`、`version/v`
+- 内置命令：`help/h/?`、`exit/quit/q`、`clear/cls`、`reset/r/new/n`、`history/hist`、`resume`、`version/v`
 - 历史文件 `.mini-code-history`，运行时数据在 `.mini-code/`
+- 会话持久化：每次任务结束（含出错/取消）由 Orchestrator 写入 `.mini-code/sessions/last.json`（tmp+rename，0600），`resume` 命令恢复并按当前状态重建系统提示
 - `LM_LOG_LEVEL=verbose` 打印完整请求/响应
 
 ## 提交规范
