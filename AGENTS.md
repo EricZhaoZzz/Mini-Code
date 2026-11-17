@@ -85,7 +85,8 @@ CLI → Orchestrator.Handle → Router 选 agent 类型
 - **工具系统**：`registry.go` 的 `init()` 注册；参数结构体同时使用
   `jsonschema:"required"`（生成 function schema）与 `validate:"required"`（运行时校验）；
   schema 由 `invopop/jsonschema` 自动生成。`dispatch_agent` 的工厂由 `main.go` 注入，
-  只接受 `reviewer`/`researcher`。
+  只接受 `reviewer`/`researcher`，子 Agent 继承父任务 ctx 并以静默模式运行。
+  耗时工具用 `registerCtx()` 注册以响应取消；危险操作（`delete_file`）经 `askUser()` 由用户本人确认。
 - **shell 防护不是沙箱**：始终拦截破坏性命令黑名单；`LM_SHELL_STRICT=1` 时改为白名单模式，
   但通过检查的命令仍可访问工作区外文件。
 - **沙箱分三层且刻意不对称**（`pkg/sandbox`，见

@@ -37,6 +37,11 @@ type DownloadResult struct {
 }
 
 func DownloadFile(args interface{}) (interface{}, error) {
+	return DownloadFileContext(context.Background(), args)
+}
+
+// DownloadFileContext 下载文件；父 ctx 取消时中止下载。
+func DownloadFileContext(parent context.Context, args interface{}) (interface{}, error) {
 	var params DownloadFileArguments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
@@ -94,7 +99,7 @@ func DownloadFile(args interface{}) (interface{}, error) {
 		timeout = 300 // 默认 5 分钟
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	// 创建 HTTP 请求

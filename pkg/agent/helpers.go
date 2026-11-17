@@ -74,8 +74,8 @@ func truncateForLog(s string, limit int) string {
 //
 // 返回的 error 必须非 nil 当且仅当工具执行失败 —— UI 摘要与上层统计都依赖该字段。
 // 不能只把错误写进结果字符串：那样调用方会把它当成成功（回归缺陷）。
-func (a *BaseAgent) executeToolCall(toolCall openai.ToolCall) (string, error) {
-	result, err := a.executeToolCallRaw(toolCall)
+func (a *BaseAgent) executeToolCall(ctx context.Context, toolCall openai.ToolCall) (string, error) {
+	result, err := a.executeToolCallRaw(ctx, toolCall)
 	return capToolResult(result), err
 }
 
@@ -98,14 +98,14 @@ func capToolResult(s string) string {
 		string(runes[len(runes)-tail:])
 }
 
-func (a *BaseAgent) executeToolCallRaw(toolCall openai.ToolCall) (string, error) {
+func (a *BaseAgent) executeToolCallRaw(ctx context.Context, toolCall openai.ToolCall) (string, error) {
 	executor := tools.Executors[toolCall.Function.Name]
 	if executor == nil {
 		return fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name),
 			fmt.Errorf("未知工具 %s", toolCall.Function.Name)
 	}
 
-	result, err := executor(toolCall.Function.Arguments)
+	result, err := executor(ctx, toolCall.Function.Arguments)
 	output, _ := result.(string)
 
 	if err != nil {
@@ -172,7 +172,7 @@ func (a *BaseAgent) executeToolCallsConcurrently(ctx context.Context, toolCalls 
 			}
 
 			// 执行工具调用
-			resultStr, execErr := a.executeToolCall(toolCall)
+			resultStr, execErr := a.executeToolCall(ctx, toolCall)
 			results[index] = toolCallResult{
 				index:      index,
 				toolCallID: toolCall.ID,
@@ -185,6 +185,29 @@ func (a *BaseAgent) executeToolCallsConcurrently(ctx context.Context, toolCalls 
 
 	wg.Wait()
 	return results
+}
+
+// displayToolCallsQuiet 静默模式下每个工具调用只打印一行，不做任何光标操作。
+func (a *BaseAgent) displayToolCallsQuiet(toolCalls []openai.ToolCall) {
+	for _, tc := range toolCalls {
+		ui.PrintDim("    ↳ [%s] %s %s\n", a.Name(), tc.Function.Name, toolArgsSummary(tc.Function.Arguments))
+	}
+}
+
+// toolArgsSummary 从工具参数中提取最有代表性的字段用于展示。
+func toolArgsSummary(arguments string) string {
+	var args map[string]any
+	_ = json.Unmarshal([]byte(arguments), &args)
+	if path, ok := args["path"].(string); ok {
+		return path
+	}
+	if query, ok := args["query"].(string); ok {
+		return truncateForLog(query, 30)
+	}
+	if cmd, ok := args["command"].(string); ok {
+		return truncateForLog(cmd, 30)
+	}
+	return ""
 }
 
 // displayToolCallsStart 显示工具调用开始
@@ -201,19 +224,7 @@ func (a *BaseAgent) displayToolCallsStart(toolCalls []openai.ToolCall) {
 			icon = ui.IconTool
 		}
 
-		// 解析参数以获取更友好的显示
-		var args map[string]any
-		json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-		var argsSummary string
-		if path, ok := args["path"].(string); ok {
-			argsSummary = path
-		} else if query, ok := args["query"].(string); ok {
-			argsSummary = truncateForLog(query, 30)
-		} else if cmd, ok := args["command"].(string); ok {
-			argsSummary = truncateForLog(cmd, 30)
-		}
-
+		argsSummary := toolArgsSummary(tc.Function.Arguments)
 		if argsSummary != "" {
 			ui.PrintDim("  %d. %s %s %s", i+1, icon, ui.SprintColor(ui.Bold, displayName), ui.SprintColor(ui.Dim, argsSummary))
 		} else {

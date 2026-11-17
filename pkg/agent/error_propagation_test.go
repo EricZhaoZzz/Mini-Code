@@ -22,17 +22,17 @@ func TestExecuteToolCall_PropagatesError(t *testing.T) {
 		strTool     = "test_zz_str"
 	)
 
-	tools.Executors[failTool] = func(args interface{}) (interface{}, error) {
+	tools.Executors[failTool] = func(_ context.Context, args interface{}) (interface{}, error) {
 		return "部分输出", errors.New("boom")
 	}
-	tools.Executors[badJSONTool] = func(args interface{}) (interface{}, error) {
+	tools.Executors[badJSONTool] = func(_ context.Context, args interface{}) (interface{}, error) {
 		return nil, errors.New("invalid character 'i' looking for beginning of object key")
 	}
-	tools.Executors[okTool] = func(args interface{}) (interface{}, error) {
+	tools.Executors[okTool] = func(_ context.Context, args interface{}) (interface{}, error) {
 		return "一切正常", nil
 	}
 	// 非字符串结果：工具返回结构体时不应变成 Go 语法串
-	tools.Executors[strTool] = func(args interface{}) (interface{}, error) {
+	tools.Executors[strTool] = func(_ context.Context, args interface{}) (interface{}, error) {
 		return map[string]interface{}{"path": "a.go", "size": 42}, nil
 	}
 	t.Cleanup(func() {
@@ -96,7 +96,7 @@ func TestExecuteToolCall_UnknownTool(t *testing.T) {
 // TestExecuteToolCall_StructResultIsJSON 非字符串结果应序列化为 JSON。
 func TestExecuteToolCall_StructResultIsJSON(t *testing.T) {
 	const structTool = "test_zz_struct"
-	tools.Executors[structTool] = func(args interface{}) (interface{}, error) {
+	tools.Executors[structTool] = func(_ context.Context, args interface{}) (interface{}, error) {
 		return map[string]interface{}{"path": "a.go"}, nil
 	}
 	t.Cleanup(func() { delete(tools.Executors, structTool) })

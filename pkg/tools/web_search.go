@@ -49,6 +49,11 @@ func exaEndpoint() string {
 }
 
 func WebSearch(args interface{}) (interface{}, error) {
+	return WebSearchContext(context.Background(), args)
+}
+
+// WebSearchContext 执行搜索；父 ctx 取消时中止请求。
+func WebSearchContext(parent context.Context, args interface{}) (interface{}, error) {
 	var params WebSearchArguments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
@@ -62,7 +67,7 @@ func WebSearch(args interface{}) (interface{}, error) {
 		maxResults = 10
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 
 	hits, err := exaSearch(ctx, exaEndpoint(), params.Query, maxResults)

@@ -1,6 +1,7 @@
 package tools_test
 
 import (
+	"context"
 	"encoding/json"
 	"mini-code/pkg/tools"
 	"testing"
@@ -12,7 +13,7 @@ func TestDispatchAgent_RequiresRoleAndTask(t *testing.T) {
 		"role": "reviewer",
 		// 缺少 task
 	})
-	_, err := tools.Executors["dispatch_agent"](string(args))
+	_, err := tools.Executors["dispatch_agent"](context.Background(), string(args))
 	if err == nil {
 		t.Error("expected error for missing task")
 	}
@@ -23,7 +24,7 @@ func TestDispatchAgent_InvalidRoleReturnsError(t *testing.T) {
 		"role": "unknown_role",
 		"task": "do something",
 	})
-	_, err := tools.Executors["dispatch_agent"](string(args))
+	_, err := tools.Executors["dispatch_agent"](context.Background(), string(args))
 	if err == nil {
 		t.Error("expected error for invalid role")
 	}

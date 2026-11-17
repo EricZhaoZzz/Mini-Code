@@ -37,7 +37,7 @@ func (f *fakeChatCompletionClientBase) ChatStream(_ context.Context, _ openai.Ch
 
 func TestBaseAgent_RunExecutesToolAndContinues(t *testing.T) {
 	const toolName = "test_echo_base"
-	tools.Executors[toolName] = func(args interface{}) (interface{}, error) {
+	tools.Executors[toolName] = func(_ context.Context, args interface{}) (interface{}, error) {
 		return "tool-output", nil
 	}
 	defer delete(tools.Executors, toolName)
@@ -141,7 +141,7 @@ func TestBaseAgent_RunConcurrentToolCallsPreserveOrder(t *testing.T) {
 	toolsToRegister := []string{"tool_a", "tool_b", "tool_c"}
 	for _, name := range toolsToRegister {
 		toolName := name
-		tools.Executors[toolName] = func(args interface{}) (interface{}, error) {
+		tools.Executors[toolName] = func(_ context.Context, args interface{}) (interface{}, error) {
 			mu.Lock()
 			executed = append(executed, toolName)
 			mu.Unlock()

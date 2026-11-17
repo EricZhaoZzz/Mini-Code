@@ -1,12 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 )
 
-// AgentFactory 创建子 Agent 的工厂函数类型
-// 返回 Run 方法的响应和错误
-type AgentFactory func(role string, task string) (string, error)
+// AgentFactory 创建并运行子 Agent，返回其最终回复。
+// ctx 来自父任务，父任务被取消时子 Agent 必须随之停止。
+type AgentFactory func(ctx context.Context, role string, task string) (string, error)
 
 // dispatchFactory 通过闭包注入，由 main.go 在启动时设置
 var dispatchFactory AgentFactory
@@ -23,6 +24,11 @@ type DispatchAgentArguments struct {
 }
 
 func DispatchAgent(args interface{}) (interface{}, error) {
+	return DispatchAgentContext(context.Background(), args)
+}
+
+// DispatchAgentContext 调用子 Agent，ctx 取消时子 Agent 随之停止。
+func DispatchAgentContext(ctx context.Context, args interface{}) (interface{}, error) {
 	var params DispatchAgentArguments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
@@ -40,7 +46,7 @@ func DispatchAgent(args interface{}) (interface{}, error) {
 	}
 
 	// 调用工厂函数执行子 Agent
-	reply, err := dispatchFactory(params.Role, params.Task)
+	reply, err := dispatchFactory(ctx, params.Role, params.Task)
 	if err != nil {
 		return nil, fmt.Errorf("[%s Agent] 执行失败: %w", params.Role, err)
 	}

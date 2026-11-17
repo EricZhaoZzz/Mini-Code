@@ -1,6 +1,7 @@
 package tools_test
 
 import (
+	"context"
 	"encoding/json"
 	"mini-code/pkg/memory"
 	"mini-code/pkg/tools"
@@ -30,7 +31,7 @@ func TestRememberTool_StoresAndReturnsID(t *testing.T) {
 		"scope":   "project",
 	})
 
-	result, err := tools.Executors["remember"](string(args))
+	result, err := tools.Executors["remember"](context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("remember failed: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestForgetTool_DeletesMemory(t *testing.T) {
 	id, _ := store.Remember("临时记忆", "user", "", nil)
 	args, _ := json.Marshal(map[string]interface{}{"memory_id": id})
 
-	_, err := tools.Executors["forget"](string(args))
+	_, err := tools.Executors["forget"](context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("forget failed: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestRecallTool_FindsRelevantMemory(t *testing.T) {
 	store.Remember("项目使用 PostgreSQL 数据库", "project", ".", nil)
 
 	args, _ := json.Marshal(map[string]interface{}{"query": "数据库"})
-	result, err := tools.Executors["recall"](string(args))
+	result, err := tools.Executors["recall"](context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("recall failed: %v", err)
 	}

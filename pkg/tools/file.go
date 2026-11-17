@@ -286,6 +286,11 @@ type RunShellArguments struct {
 }
 
 func RunShell(args interface{}) (interface{}, error) {
+	return RunShellContext(context.Background(), args)
+}
+
+// RunShellContext 执行 shell 命令；ctx 取消时终止命令（含整个进程组）。
+func RunShellContext(ctx context.Context, args interface{}) (interface{}, error) {
 	var params RunShellArguments
 	if err := parseArgs(args, &params); err != nil {
 		return nil, err
@@ -401,12 +406,19 @@ func RunShell(args interface{}) (interface{}, error) {
 	// 等待结果：正常结束，或超时后返回已累积的部分输出。
 	// 即便终止失败也不能无限期阻塞，因此这里用 select 而不是裸接收。
 	var cmdStatus cmd.Status
-	var timedOut bool
+	var timedOut, cancelled bool
 	select {
 	case cmdStatus = <-statusChan:
 	case <-time.After(timeout):
 		timedOut = true
 		// 尽力终止，但不阻塞等待它真的结束
+		go func() {
+			_ = terminateRunner(runner)
+		}()
+		cmdStatus = runner.Status()
+	case <-ctx.Done():
+		// 用户中止任务：命令可能还要跑很久，必须立即终止而不是等到超时
+		cancelled = true
 		go func() {
 			_ = terminateRunner(runner)
 		}()
@@ -433,6 +445,9 @@ func RunShell(args interface{}) (interface{}, error) {
 		output += "[stderr]: " + stderrText
 	}
 
+	if cancelled {
+		return output, fmt.Errorf("命令已随任务取消而终止: %w", ctx.Err())
+	}
 	// 超时优先于 exit code 报告，避免把超时误报成普通失败
 	if timedOut {
 		if output == "" {

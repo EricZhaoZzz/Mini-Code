@@ -1,8 +1,14 @@
 package tools
 
-import "github.com/sashabaranov/go-openai"
+import (
+	"context"
 
-type ToolExecutor func(args interface{}) (interface{}, error)
+	"github.com/sashabaranov/go-openai"
+)
+
+// ToolExecutor 执行工具。ctx 随任务取消（双击 Esc）而取消，
+// 耗时工具（shell、网络、子 Agent）必须响应它，否则取消只能等工具自然结束。
+type ToolExecutor func(ctx context.Context, args interface{}) (interface{}, error)
 
 var (
 	Definitions []openai.Tool
@@ -17,7 +23,7 @@ func init() {
 	register("read_file", "读取本地文件", ReadFileArguments{}, ReadFile)
 	register("list_files", "列出目录下的文件", ListFilesArguments{}, ListFiles)
 	register("search_in_files", "在目录下按字面文本搜索（非正则）", SearchInFilesArguments{}, SearchInFiles)
-	register("run_shell", "在工作区目录运行 shell 命令（默认 120 秒超时；可访问工作区外，勿用于绕过路径限制）", RunShellArguments{}, RunShell)
+	registerCtx("run_shell", "在工作区目录运行 shell 命令（默认 120 秒超时；可访问工作区外，勿用于绕过路径限制）", RunShellArguments{}, RunShellContext)
 	register("replace_in_file", "在文件中局部替换文本：old 必须与原文逐字一致且唯一；需要批量替换时设置 replace_all=true", ReplaceInFileArguments{}, ReplaceInFile)
 
 	// 文件操作扩展
@@ -28,8 +34,8 @@ func init() {
 	register("get_file_info", "获取文件或目录的详细信息（包括大小、修改时间、SHA256等）", GetFileInfoArguments{}, GetFileInfo)
 
 	// 网络操作
-	register("download_file", "下载远程文件到本地", DownloadFileArguments{}, DownloadFile)
-	register("web_search", "搜索互联网获取实时信息", WebSearchArguments{}, WebSearch)
+	registerCtx("download_file", "下载远程文件到本地", DownloadFileArguments{}, DownloadFileContext)
+	registerCtx("web_search", "搜索互联网获取实时信息", WebSearchArguments{}, WebSearchContext)
 
 	// Git 操作
 	register("git_status", "查看 Git 仓库状态", GitStatusArguments{}, GitStatus)
@@ -42,10 +48,18 @@ func init() {
 	register("recall", "从长期记忆中检索相关信息", RecallArguments{}, Recall)
 
 	// Agent 调度工具
-	register("dispatch_agent", "调用专化子 Agent 执行子任务（reviewer 或 researcher）", DispatchAgentArguments{}, DispatchAgent)
+	registerCtx("dispatch_agent", "调用专化子 Agent 执行子任务（reviewer 或 researcher）", DispatchAgentArguments{}, DispatchAgentContext)
 }
 
-func register(name, description string, args interface{}, executor ToolExecutor) {
+// register 注册不需要感知取消的快速工具（本地文件、git、记忆等）。
+func register(name, description string, args interface{}, fn func(args interface{}) (interface{}, error)) {
+	registerCtx(name, description, args, func(_ context.Context, a interface{}) (interface{}, error) {
+		return fn(a)
+	})
+}
+
+// registerCtx 注册需要响应取消的工具。
+func registerCtx(name, description string, args interface{}, executor ToolExecutor) {
 	Definitions = append(Definitions, openai.Tool{
 		Type: openai.ToolTypeFunction,
 		Function: &openai.FunctionDefinition{

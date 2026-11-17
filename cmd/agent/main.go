@@ -451,7 +451,7 @@ func runWorker(options workerOptions) error {
 		orch.RestoreSession(snapshot)
 	}
 
-	factory := func(agentType string) agent.Agent {
+	newAgent := func(agentType string) *agent.BaseAgent {
 		switch agentType {
 		case "reviewer":
 			return agent.NewReviewerAgent(p, modelID)
@@ -461,14 +461,21 @@ func runWorker(options workerOptions) error {
 			return agent.NewCoderAgent(p, modelID)
 		}
 	}
+	factory := func(agentType string) agent.Agent { return newAgent(agentType) }
 
-	tools.SetDispatchFactory(func(role string, task string) (string, error) {
-		subAgent := factory(role)
+	// 子 Agent：
+	//  - ctx 来自父任务，双击 Esc 时一并停止；
+	//  - 使用与主 Agent 相同的共享系统提示（含工作区规则、沙箱说明与记忆），
+	//    角色提示仍由 BaseAgent 追加在其后；
+	//  - 静默模式，只输出单行进度，避免与父 Agent 的工具调用面板互相覆盖。
+	tools.SetDispatchFactory(func(ctx context.Context, role string, task string) (string, error) {
+		subAgent := newAgent(role)
+		subAgent.SetQuiet(true)
 		messages := []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: "你是专业的 AI 助手。"},
+			{Role: openai.ChatMessageRoleSystem, Content: agent.BuildSystemPromptWithMemory(memStore)},
 			{Role: openai.ChatMessageRoleUser, Content: task},
 		}
-		reply, _, err := subAgent.Run(context.Background(), messages, nil)
+		reply, _, err := subAgent.Run(ctx, messages, nil)
 		return reply, err
 	})
 

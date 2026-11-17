@@ -127,7 +127,9 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
 
 ## 工具系统扩展
 
-新工具：在 `pkg/tools/` 创建文件 → 定义参数结构体 → 实现 `ToolExecutor` → 在 `registry.go` 的 `init()` 调用 `register()`。
+新工具：在 `pkg/tools/` 创建文件 → 定义参数结构体 → 实现执行函数 → 在 `registry.go` 的 `init()` 注册。
+- 快速的本地工具用 `register()`（执行函数 `func(args)`）；耗时工具（shell / 网络 / 子 Agent）用 `registerCtx()`（`func(ctx, args)`），必须响应 ctx 取消，否则双击 Esc 中止不了正在运行的工具
+- 危险操作经 `askUser()`（`confirm.go`）请求用户本人确认，处理器由 `main.go` 注入；未注入时（单测）回退为校验模型传入的 `confirm` 参数
 - `jsonschema:"required"` 标签：控制 function calling schema 的 required 字段
 - `validate:"required"` 标签（`go-playground/validator`）：运行时校验，失败返回中文错误
 - Schema 由 `invopop/jsonschema` 自动生成（`system.go` 的 `generateSchema`）

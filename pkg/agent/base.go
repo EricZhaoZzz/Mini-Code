@@ -25,7 +25,12 @@ type BaseAgent struct {
 	systemPromptOverride string // Phase 3: specialized agent system prompt
 	agentName            string // Phase 3: agent name
 	contextBudget        int    // 上下文 token 预算，超出时省略旧工具结果
+	quiet                bool   // 子 Agent 静默模式：不绘制工具面板，只打印单行进度
 }
+
+// SetQuiet 设置静默模式。子 Agent 在父 Agent 的工具调用期间运行，
+// 若照常绘制工具面板（含清行、光标上移），会把父 Agent 的输出搅乱。
+func (a *BaseAgent) SetQuiet(quiet bool) { a.quiet = quiet }
 
 func NewBaseAgent(p provider.Provider, model string, allowedTools []string) *BaseAgent {
 	verbose := os.Getenv("LM_VERBOSE") != ""
@@ -145,11 +150,17 @@ func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMes
 		newMessages = append(newMessages, assistantMsg)
 
 		if len(toolCalls) > 0 {
-			fmt.Println()
-			a.displayToolCallsStart(toolCalls)
-			results := a.executeToolCallsConcurrently(ctx, toolCalls)
-			a.displayToolCallsResults(results)
-			ui.PrintDim("  等待响应...")
+			var results []toolCallResult
+			if a.quiet {
+				a.displayToolCallsQuiet(toolCalls)
+				results = a.executeToolCallsConcurrently(ctx, toolCalls)
+			} else {
+				fmt.Println()
+				a.displayToolCallsStart(toolCalls)
+				results = a.executeToolCallsConcurrently(ctx, toolCalls)
+				a.displayToolCallsResults(results)
+				ui.PrintDim("  等待响应...")
+			}
 
 			for _, result := range results {
 				newMessages = append(newMessages, openai.ChatCompletionMessage{
