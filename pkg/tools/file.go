@@ -56,8 +56,13 @@ func WriteFile(args interface{}) (interface{}, error) {
 }
 
 type ReadFileArguments struct {
-	Path string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要读取的工作区内相对路径"`
+	Path   string `json:"path" validate:"required" jsonschema:"required" jsonschema_description:"要读取的工作区内相对路径"`
+	Offset int    `json:"offset,omitempty" jsonschema_description:"起始行号（从 1 开始），留空从第 1 行读起"`
+	Limit  int    `json:"limit,omitempty" jsonschema_description:"最多读取的行数，留空默认 2000 行"`
 }
+
+// defaultReadFileLimit read_file 未指定 limit 时的最大行数。
+const defaultReadFileLimit = 2000
 
 func ReadFile(args interface{}) (interface{}, error) {
 	var params ReadFileArguments
@@ -79,7 +84,54 @@ func ReadFile(args interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("读取文件失败: %w", err)
 	}
 
-	return string(data), nil
+	return sliceFileLines(string(data), params.Offset, params.Limit)
+}
+
+// sliceFileLines 按行截取文件内容。完整读取时原样返回（不加行号，
+// 保证模型可直接复制原文给 replace_in_file）；发生截断时在末尾附上提示，
+// 告诉模型总行数与续读方式，避免它误以为已经看到全文。
+func sliceFileLines(content string, offset, limit int) (string, error) {
+	if offset < 0 || limit < 0 {
+		return "", fmt.Errorf("offset 和 limit 不能为负数")
+	}
+	if offset == 0 {
+		offset = 1
+	}
+	if limit == 0 {
+		limit = defaultReadFileLimit
+	}
+
+	lines := strings.SplitAfter(content, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	total := len(lines)
+
+	if offset == 1 && total <= limit {
+		return content, nil
+	}
+	if offset > total {
+		return "", fmt.Errorf("offset %d 超出文件总行数 %d", offset, total)
+	}
+
+	end := offset - 1 + limit
+	if end > total {
+		end = total
+	}
+	result := strings.Join(lines[offset-1:end], "")
+	if offset == 1 && end == total {
+		return result, nil
+	}
+
+	notice := fmt.Sprintf("[已显示第 %d-%d 行，共 %d 行", offset, end, total)
+	if end < total {
+		notice += fmt.Sprintf("；继续读取请用 offset=%d", end+1)
+	}
+	notice += "]"
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	return result + "\n" + notice, nil
 }
 
 type ListFilesArguments struct {

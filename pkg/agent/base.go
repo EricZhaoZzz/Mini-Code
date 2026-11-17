@@ -24,6 +24,7 @@ type BaseAgent struct {
 	maxTurns             int
 	systemPromptOverride string // Phase 3: specialized agent system prompt
 	agentName            string // Phase 3: agent name
+	contextBudget        int    // 上下文 token 预算，超出时省略旧工具结果
 }
 
 func NewBaseAgent(p provider.Provider, model string, allowedTools []string) *BaseAgent {
@@ -43,6 +44,7 @@ func NewBaseAgent(p provider.Provider, model string, allowedTools []string) *Bas
 		maxConcurrency: 5,
 		verbose:        verbose,
 		maxTurns:       maxTurns,
+		contextBudget:  ContextBudget(),
 	}
 }
 
@@ -94,6 +96,8 @@ func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMes
 		allMessages := make([]openai.ChatCompletionMessage, 0, len(messages)+len(newMessages))
 		allMessages = append(allMessages, messages...)
 		allMessages = append(allMessages, newMessages...)
+		// 单次任务内多轮工具调用也可能撑爆窗口：超预算时省略较早的工具结果
+		allMessages = PruneToolResults(allMessages, a.contextBudget)
 
 		req := openai.ChatCompletionRequest{
 			Model:    a.model,

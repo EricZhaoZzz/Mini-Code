@@ -75,6 +75,30 @@ func truncateForLog(s string, limit int) string {
 // 返回的 error 必须非 nil 当且仅当工具执行失败 —— UI 摘要与上层统计都依赖该字段。
 // 不能只把错误写进结果字符串：那样调用方会把它当成成功（回归缺陷）。
 func (a *BaseAgent) executeToolCall(toolCall openai.ToolCall) (string, error) {
+	result, err := a.executeToolCallRaw(toolCall)
+	return capToolResult(result), err
+}
+
+// MaxToolResultChars 单个工具结果回传给模型的最大 rune 数。
+// 约 1 万 token 级别，足够容纳绝大多数有效输出，又不至于一次读入撑爆窗口。
+const MaxToolResultChars = 30_000
+
+// capToolResult 超长结果保留头尾、省略中间。
+// 保留尾部是因为 shell / 测试输出的报错与汇总通常在末尾。
+func capToolResult(s string) string {
+	runes := []rune(s)
+	if len(runes) <= MaxToolResultChars {
+		return s
+	}
+	head := MaxToolResultChars * 2 / 3
+	tail := MaxToolResultChars - head
+	omitted := len(runes) - head - tail
+	return string(runes[:head]) +
+		fmt.Sprintf("\n\n...[输出过长，已省略中间 %d 个字符；可缩小范围重新调用，如 read_file 的 offset/limit]...\n\n", omitted) +
+		string(runes[len(runes)-tail:])
+}
+
+func (a *BaseAgent) executeToolCallRaw(toolCall openai.ToolCall) (string, error) {
 	executor := tools.Executors[toolCall.Function.Name]
 	if executor == nil {
 		return fmt.Sprintf("错误: 未知工具 %s", toolCall.Function.Name),

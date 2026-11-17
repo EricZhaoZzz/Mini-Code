@@ -7,8 +7,6 @@ import (
 	"mini-code/pkg/memory"
 	"mini-code/pkg/provider"
 	"mini-code/pkg/ui"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -145,12 +143,7 @@ func (o *Orchestrator) Handle(ctx context.Context, msg channel.IncomingMessage, 
 
 // contextBudget 返回上下文预算，可用 LM_CONTEXT_BUDGET 覆盖（单位：token）。
 func contextBudget() int {
-	if v := os.Getenv("LM_CONTEXT_BUDGET"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
-	}
-	return agent.DefaultContextTokenBudget
+	return agent.ContextBudget()
 }
 
 // compactIfNeeded 在历史超出预算时压缩：把较早的对话交给模型生成摘要，

@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"mini-code/pkg/textutil"
+	"os"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -20,9 +23,22 @@ const (
 	// MaxSummaryChars 摘要最大字符数。
 	MaxSummaryChars = 800
 
-	// compactSourcePreviewChars 构造摘要提示词时，每条消息的预览长度上限。
+	// compactSourcePreviewChars 构造摘要提示词时，每条消息的预览长度上限（rune）。
 	compactSourcePreviewChars = 500
+
+	// prunedToolResultPlaceholder 运行中为腾出上下文而省略旧工具结果时的占位文本。
+	prunedToolResultPlaceholder = "[该工具结果已省略以节省上下文；如仍需要请重新调用工具]"
 )
+
+// ContextBudget 返回上下文预算，可用 LM_CONTEXT_BUDGET 覆盖（单位：token）。
+func ContextBudget() int {
+	if v := os.Getenv("LM_CONTEXT_BUDGET"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DefaultContextTokenBudget
+}
 
 // EstimateTokens 粗略估算 token 数。
 //
@@ -59,9 +75,23 @@ func EstimateTokens(s string) int {
 func EstimateMessagesTokens(msgs []openai.ChatCompletionMessage) int {
 	total := 0
 	for _, m := range msgs {
-		total += EstimateTokens(m.Content) + EstimateTokens(m.Name) + EstimateTokens(m.Role) + 4
+		total += estimateMessageTokens(m)
 	}
 	return total
+}
+
+// estimateMessageTokens 估算单条消息。
+//
+// 工具调用的参数必须计入：assistant 发起 write_file 时 Content 为空，
+// 但 Arguments 里是整份文件内容，漏算会让压缩触发得过晚。
+func estimateMessageTokens(m openai.ChatCompletionMessage) int {
+	n := EstimateTokens(m.Content) + EstimateTokens(m.Name) + EstimateTokens(m.Role) +
+		EstimateTokens(m.ToolCallID) + 4
+	for _, tc := range m.ToolCalls {
+		n += EstimateTokens(tc.ID) + EstimateTokens(tc.Function.Name) +
+			EstimateTokens(tc.Function.Arguments) + 4
+	}
+	return n
 }
 
 // SplitMessagesForCompaction 把消息切分为「保留」与「待压缩」两部分。
@@ -88,9 +118,38 @@ func SplitMessagesForCompaction(msgs []openai.ChatCompletionMessage, keep int) (
 		return append(kept, rest...), nil
 	}
 
-	kept = append(kept, rest[len(rest)-keep:]...)
-	dropped = rest[:len(rest)-keep]
+	cut := adjustCutForToolPairs(rest, len(rest)-keep)
+	if cut <= 0 {
+		return append(kept, rest...), nil
+	}
+
+	kept = append(kept, rest[cut:]...)
+	dropped = rest[:cut]
 	return kept, dropped
+}
+
+// adjustCutForToolPairs 调整切分点，保证保留区不以孤立的 tool 消息开头。
+//
+// OpenAI 兼容接口要求每条 tool 消息前必须有发起该调用的 assistant(tool_calls)，
+// 否则直接返回 400，会话就此卡死。优先向前回退以把整组调用留在保留区；
+// 回退到头仍找不到发起者时，改为向后跳过这些孤立的 tool 消息。
+func adjustCutForToolPairs(rest []openai.ChatCompletionMessage, cut int) int {
+	if cut <= 0 || cut >= len(rest) || rest[cut].Role != openai.ChatMessageRoleTool {
+		return cut
+	}
+	for i := cut - 1; i >= 0; i-- {
+		if rest[i].Role == openai.ChatMessageRoleTool {
+			continue
+		}
+		if rest[i].Role == openai.ChatMessageRoleAssistant && len(rest[i].ToolCalls) > 0 {
+			return i
+		}
+		break
+	}
+	for cut < len(rest) && rest[cut].Role == openai.ChatMessageRoleTool {
+		cut++
+	}
+	return cut
 }
 
 // NeedsCompaction 判断消息是否超出预算。budget <= 0 时使用默认值。
@@ -109,14 +168,18 @@ func BuildCompactionSummaryPrompt(dropped []openai.ChatCompletionMessage) string
 	b.WriteString("只输出摘要正文，不要加标题或解释。\n\n")
 
 	for _, m := range dropped {
-		content := m.Content
-		if len(content) > compactSourcePreviewChars {
-			content = content[:compactSourcePreviewChars] + "…"
-		}
 		b.WriteString("[")
 		b.WriteString(m.Role)
 		b.WriteString("] ")
-		b.WriteString(content)
+		b.WriteString(textutil.TruncateWithEllipsis(m.Content, compactSourcePreviewChars))
+		// 工具调用常常 Content 为空，必须把调用本身写进去，
+		// 否则摘要会丢失「改了哪些文件」这类关键信息。
+		for _, tc := range m.ToolCalls {
+			b.WriteString(" 调用 ")
+			b.WriteString(tc.Function.Name)
+			b.WriteString(" ")
+			b.WriteString(textutil.TruncateWithEllipsis(tc.Function.Arguments, 200))
+		}
 		b.WriteString("\n")
 	}
 
@@ -132,4 +195,46 @@ func TruncateSummary(s string) string {
 		return s
 	}
 	return string(runes[:MaxSummaryChars]) + "…"
+}
+
+// PruneToolResults 在单次任务的多轮工具调用中，消息超出预算时，
+// 从最早开始把 tool 结果替换为占位文本，直到回到预算内。
+//
+// 与 Orchestrator 的摘要压缩互补：那里只在任务开始前触发一次，
+// 而一次任务内部可能有几十轮工具调用。这里不调用 LLM、不改变消息结构
+// （tool_call 配对保持完整），只缩短内容，因此可以每轮执行。
+// 最后一组工具结果（模型尚未看到）永远不省略。返回新切片，不修改入参。
+func PruneToolResults(msgs []openai.ChatCompletionMessage, budget int) []openai.ChatCompletionMessage {
+	if budget <= 0 {
+		budget = DefaultContextTokenBudget
+	}
+	total := EstimateMessagesTokens(msgs)
+	if total <= budget {
+		return msgs
+	}
+
+	// 最后一条 assistant 之后的 tool 消息属于本轮，必须保留
+	protectFrom := len(msgs)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == openai.ChatMessageRoleAssistant {
+			protectFrom = i
+			break
+		}
+	}
+
+	out := make([]openai.ChatCompletionMessage, len(msgs))
+	copy(out, msgs)
+	placeholderTokens := EstimateTokens(prunedToolResultPlaceholder)
+	for i := 0; i < protectFrom && total > budget; i++ {
+		if out[i].Role != openai.ChatMessageRoleTool || out[i].Content == prunedToolResultPlaceholder {
+			continue
+		}
+		saved := EstimateTokens(out[i].Content) - placeholderTokens
+		if saved <= 0 {
+			continue
+		}
+		out[i].Content = prunedToolResultPlaceholder
+		total -= saved
+	}
+	return out
 }
