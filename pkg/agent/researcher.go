@@ -2,10 +2,15 @@ package agent
 
 import "mini-code/pkg/provider"
 
+// researcherTools 只含只读工具（remember 写的是记忆库而非工作区）。
+//
+// 曾经包含 run_shell 与 download_file：前者可执行任意命令，后者会往工作区写文件，
+// 「只读调研」仅靠提示词约束，模型不遵守时没有任何兜底。需要执行命令或落地改动
+// 的任务应由 coder 完成（写入意图在路由时优先归 coder）。
 var researcherTools = []string{
-	"read_file", "list_files", "search_in_files",
-	"download_file", "run_shell", "web_search",
-	"recall", "remember",
+	"read_file", "list_files", "search_in_files", "get_file_info",
+	"git_status", "git_diff", "git_log",
+	"web_search", "recall", "remember",
 }
 
 const researcherSystemPrompt = `你是技术调研专家，职责是把信息整理成当前仓库可执行的结论。
@@ -17,7 +22,7 @@ const researcherSystemPrompt = `你是技术调研专家，职责是把信息整
 4. 不直接做大规模实现，重点是形成可交给 coder 落地的建议。
 5. 每条结论标注来源：外部资料给 URL，仓库内给 path:line。
 6. 输出结构：结论 → 依据 → 备选方案 → 对当前仓库的影响。
-7. run_shell 仅用于只读调研命令，不要修改工作区或系统状态。
+7. 你只有只读工具；需要执行命令、下载文件或修改代码时，在结论中写明建议交给 coder 执行的具体步骤。
 8. 不要把未经验证的猜测写入记忆；只有稳定且复用价值高的结论才使用 remember。`
 
 // NewResearcherAgent 创建技术调研 Agent

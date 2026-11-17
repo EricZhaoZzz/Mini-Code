@@ -186,10 +186,22 @@ func SprintfColor(c *color.Color, format string, args ...interface{}) string {
 	return fmt.Sprintf(format, args...)
 }
 
-// PrintDim 打印暗淡文本
+// PrintDim 打印一行暗淡文本（自动换行，与 PrintWarning 等保持一致）。
+//
+// 旧实现不换行，而所有调用方都按「一行」使用，导致工具列表、欢迎提示等挤在同一行。
+// 需要不换行的临时状态行请用 PrintStatus。
 func PrintDim(format string, args ...interface{}) {
+	PrintStatus(format, args...)
+	fmt.Println()
+}
+
+// PrintStatus 打印不换行的暗淡状态文本，之后可用 ClearLine 擦除。
+//
+// 与 PrintHeader 一致，统一经 fmt 写 os.Stdout，而不是 Dim.Printf（写 color.Output）：
+// 两个 writer 混用时，换行与清行控制符可能和正文不在同一个流里。
+func PrintStatus(format string, args ...interface{}) {
 	if colorEnabled {
-		Dim.Printf(format, args...)
+		fmt.Print(Dim.Sprintf(format, args...))
 	} else {
 		fmt.Printf(format, args...)
 	}

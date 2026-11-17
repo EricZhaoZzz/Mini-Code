@@ -15,6 +15,9 @@ type SessionSnapshot struct {
 	AgentType string                         `json:"agent_type"`
 	Messages  []openai.ChatCompletionMessage `json:"messages"`
 	LastSeen  time.Time                      `json:"last_seen"`
+	// Summary 被压缩掉的早期历史摘要。热重启后缺失会导致下次压缩无法与旧摘要合并，
+	// 早期上下文就此永久丢失。
+	Summary string `json:"summary,omitempty"`
 }
 
 // Session 管理单个用户的对话状态
@@ -178,6 +181,7 @@ func (s *Session) ExportSnapshot() SessionSnapshot {
 		AgentType: s.agentType,
 		Messages:  messages,
 		LastSeen:  s.lastSeen,
+		Summary:   s.summary,
 	}
 }
 
@@ -202,5 +206,6 @@ func newSessionFromSnapshot(snapshot SessionSnapshot) *Session {
 		agentType: agentType,
 		messages:  messages,
 		lastSeen:  lastSeen,
+		summary:   snapshot.Summary,
 	}
 }

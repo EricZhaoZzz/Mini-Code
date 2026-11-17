@@ -74,7 +74,8 @@ CLI → Orchestrator.Handle → Router 选 agent 类型
   防止后续 chdir 导致安全边界漂移。所有文件工具经 `workspace.go` 校验。
 - **Agent 路由是刻意非对称的**：写入意图关键词优先级最高，直接归 coder（唯一拥有全部工具、
   误判代价最低）；其次 reviewer，再 researcher，默认 coder。专化 prompt **追加**在共享 prompt
-  之后，不替换；reviewer/researcher 使用工具白名单（见各自 `*Tools` 变量）。
+  之后，不替换；reviewer/researcher 只持有只读工具白名单（见各自 `*Tools` 变量）。
+  英文关键词按整词匹配（允许 s/ed/ing 词形），中文按子串匹配。
 - **BaseAgent**：同一轮多个 tool_call 并发执行（`maxConcurrency=5`），全部完成后进入下一轮；
   非流式路径（handler=nil）仅供测试。
 - **上下文压缩在 Orchestrator 而非 Agent**：Agent 无跨轮状态，压缩若放进 Run 会每轮重复触发。

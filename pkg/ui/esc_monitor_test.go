@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"io"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -175,5 +178,24 @@ func TestGlobalEscMonitor(t *testing.T) {
 	// 测试全局实例
 	if GlobalEscMonitor == nil {
 		t.Fatal("GlobalEscMonitor should not be nil")
+	}
+}
+
+func TestPrintDimEndsWithNewlineAndPrintStatusDoesNot(t *testing.T) {
+	capture := func(fn func()) string {
+		r, w, _ := os.Pipe()
+		orig := os.Stdout
+		os.Stdout = w
+		fn()
+		w.Close()
+		os.Stdout = orig
+		data, _ := io.ReadAll(r)
+		return string(data)
+	}
+	if out := capture(func() { PrintDim("a %d", 1) }); !strings.HasSuffix(out, "a 1\n") {
+		t.Errorf("PrintDim 应以换行结尾: %q", out)
+	}
+	if out := capture(func() { PrintStatus("b") }); strings.HasSuffix(out, "\n") {
+		t.Errorf("PrintStatus 不应换行: %q", out)
 	}
 }

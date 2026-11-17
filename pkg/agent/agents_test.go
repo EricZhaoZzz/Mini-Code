@@ -48,13 +48,15 @@ func TestResearcherAgent_HasSearchTools(t *testing.T) {
 		allowed[t] = true
 	}
 
-	for _, required := range []string{"search_in_files", "download_file", "recall", "remember"} {
+	for _, required := range []string{"search_in_files", "web_search", "git_log", "recall", "remember"} {
 		if !allowed[required] {
 			t.Errorf("ResearcherAgent missing tool: %s", required)
 		}
 	}
-	// ResearcherAgent 不能写文件
-	if allowed["write_file"] {
-		t.Error("ResearcherAgent should NOT have write_file")
+	// 只读调研：不能写工作区，也不能执行任意命令
+	for _, forbidden := range []string{"write_file", "replace_in_file", "delete_file", "run_shell", "download_file"} {
+		if allowed[forbidden] {
+			t.Errorf("ResearcherAgent should NOT have tool: %s", forbidden)
+		}
 	}
 }

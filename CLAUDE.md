@@ -105,7 +105,7 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
   Landlock 作用于调用线程且不可逆，在主进程收紧会锁死 mini-code 自身（`~/.mini-code/memory.db`、审计日志、`.mini-code/releases/`）。因此 `sandbox.Wrap` 只把命令改写为 `mini-code --sandbox-run ...`，由该子进程收紧后再 exec；`main.go` 开头用 `sandbox.IsRunnerInvocation` 优先分流。
 
 - **Agent 路由刻意非对称**
-  `router.go` 关键词匹配（中英混合）：写入意图优先级最高，直接归 coder（唯一拥有全部工具，误判代价最低）；其次 reviewer，再 researcher，默认 coder。专化 prompt **追加**在共享 prompt 之后，不替换；reviewer（只读）/researcher 使用工具白名单（见各自 `*Tools` 变量）。
+  `router.go` 关键词匹配（中英混合）：写入意图优先级最高，直接归 coder（唯一拥有全部工具，误判代价最低）；其次 reviewer，再 researcher，默认 coder。中文关键词按子串匹配，英文按整词匹配并允许 s/ed/ing 等词形（避免 add 命中 address）。专化 prompt **追加**在共享 prompt 之后，不替换；reviewer / researcher 都只持有只读工具白名单（见各自 `*Tools` 变量），不含 `run_shell` / `download_file`。
 
 - **上下文压缩放在 Orchestrator 而非 Agent**
   Agent 无跨轮状态，压缩放进 `Run` 会每轮重复触发。默认预算 96k token，保留 system + 最近 12 条，摘要写回 Session 供下次合并；调用 LLM 失败时静默放弃压缩，不阻塞主流程。

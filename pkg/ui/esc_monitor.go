@@ -207,7 +207,9 @@ func (m *EscMonitor) HandleEsc() bool {
 	m.lastEscTime = now
 	// 打印提示信息
 	fmt.Print("\r\033[K") // 清除当前行
-	PrintDim("  [再按一次 Esc 可中止任务]")
+	// 状态行不换行：监控运行时终端处于 raw 模式（Unix 下关闭了 OPOST），
+	// 单独的 \n 不会回到行首。
+	PrintStatus("  [再按一次 Esc 可中止任务]")
 	return false
 }
 

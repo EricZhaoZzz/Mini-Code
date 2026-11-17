@@ -26,6 +26,21 @@ type BaseAgent struct {
 	agentName            string // Phase 3: agent name
 	contextBudget        int    // 上下文 token 预算，超出时省略旧工具结果
 	quiet                bool   // 子 Agent 静默模式：不绘制工具面板，只打印单行进度
+	waiting              bool   // 当前行是否为「等待响应」状态行（需在下次输出前擦除）
+}
+
+// showWaiting 打印不换行的「等待响应」状态行，收到模型输出时由 clearWaiting 擦除。
+func (a *BaseAgent) showWaiting() {
+	ui.PrintStatus("  等待响应...")
+	a.waiting = true
+}
+
+// clearWaiting 擦除等待状态行；未显示时为空操作，可重复调用。
+func (a *BaseAgent) clearWaiting() {
+	if a.waiting {
+		ui.ClearLine()
+		a.waiting = false
+	}
 }
 
 // SetQuiet 设置静默模式。子 Agent 在父 Agent 的工具调用期间运行，
@@ -80,6 +95,8 @@ func (a *BaseAgent) filteredDefinitions() []openai.Tool {
 }
 
 func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMessage, handler StreamChunkHandler) (string, []openai.ChatCompletionMessage, error) {
+	defer a.clearWaiting()
+
 	// Specialized agents extend the shared system prompt instead of replacing it.
 	if a.systemPromptOverride != "" && len(messages) > 0 && messages[0].Role == "system" {
 		overrideMsgs := make([]openai.ChatCompletionMessage, len(messages))
@@ -119,6 +136,7 @@ func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMes
 			// Non-streaming path (for testing)
 			var resp openai.ChatCompletionResponse
 			resp, err = a.provider.Chat(ctx, req)
+			a.clearWaiting()
 			if err != nil {
 				return "", newMessages, fmt.Errorf("chat error: %w", err)
 			}
@@ -155,11 +173,12 @@ func (a *BaseAgent) Run(ctx context.Context, messages []openai.ChatCompletionMes
 				a.displayToolCallsQuiet(toolCalls)
 				results = a.executeToolCallsConcurrently(ctx, toolCalls)
 			} else {
+				a.clearWaiting()
 				fmt.Println()
 				a.displayToolCallsStart(toolCalls)
 				results = a.executeToolCallsConcurrently(ctx, toolCalls)
 				a.displayToolCallsResults(results)
-				ui.PrintDim("  等待响应...")
+				a.showWaiting()
 			}
 
 			for _, result := range results {

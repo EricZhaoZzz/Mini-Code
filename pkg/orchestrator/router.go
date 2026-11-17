@@ -1,6 +1,9 @@
 package orchestrator
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Router 根据用户消息内容路由到合适的 Agent 类型。
 //
@@ -29,7 +32,7 @@ var writeIntentKeywords = []string{
 	// 英文
 	"implement", "fix", "refactor", "add", "create", "update", "modify",
 	"write", "change", "delete", "remove", "rename", "migrate", "patch",
-	"bug", "broken", "error", "crash", "failing", "should be",
+	"bug", "debug", "broken", "error", "crash", "failing", "should be", "modified",
 }
 
 // reviewIntentKeywords 表示「只读审查」意图。
@@ -47,30 +50,83 @@ var researcherIntentKeywords = []string{
 	"哪个更", "更适合", "选哪个", "有什么区别",
 }
 
+// 预编译的关键词匹配器，与上面的关键词表一一对应。
+var (
+	writeIntentMatcher      = newKeywordMatcher(writeIntentKeywords)
+	reviewIntentMatcher     = newKeywordMatcher(reviewIntentKeywords)
+	researcherIntentMatcher = newKeywordMatcher(researcherIntentKeywords)
+)
+
 // Route 返回应处理该消息的 Agent 类型名称。
 // 返回值："coder" | "reviewer" | "researcher"
 func (r *Router) Route(message string) string {
 	lower := strings.ToLower(message)
 
 	// 写入意图优先：coder 能完成所有任务，误判代价最低
-	if containsAny(lower, writeIntentKeywords) {
+	if writeIntentMatcher.match(lower) {
 		return "coder"
 	}
-	if containsAny(lower, reviewIntentKeywords) {
+	if reviewIntentMatcher.match(lower) {
 		return "reviewer"
 	}
-	if containsAny(lower, researcherIntentKeywords) {
+	if researcherIntentMatcher.match(lower) {
 		return "researcher"
 	}
 	return "coder" // 兜底
 }
 
-// containsAny 判断文本是否包含任一关键词。
-func containsAny(text string, keywords []string) bool {
+// keywordMatcher 匹配关键词表。
+//
+// 中文关键词按子串匹配（中文无词边界）；英文关键词按整词匹配并允许常见词形变化。
+// 旧实现对英文也用子串匹配，导致 add 命中 address、fix 命中 prefix、
+// patch 命中 dispatch_agent，把明显的只读请求误判为写入意图。
+type keywordMatcher struct {
+	cjk     []string
+	english *regexp.Regexp
+}
+
+func newKeywordMatcher(keywords []string) keywordMatcher {
+	var m keywordMatcher
+	var alts []string
 	for _, kw := range keywords {
+		if isASCII(kw) {
+			alts = append(alts, englishKeywordPattern(kw))
+		} else {
+			m.cjk = append(m.cjk, kw)
+		}
+	}
+	if len(alts) > 0 {
+		// \b 在 RE2 中是 ASCII 词边界：中文字符视为非单词字符，
+		// 因此「review一下」「fix一下」中英混写仍能命中。
+		m.english = regexp.MustCompile(`\b(?:` + strings.Join(alts, "|") + `)\b`)
+	}
+	return m
+}
+
+// englishKeywordPattern 生成允许常见屈折变化的模式：
+// fix → fixes/fixed/fixing，create → created/creating，add → adds/added/adding。
+func englishKeywordPattern(kw string) string {
+	pattern := regexp.QuoteMeta(kw) + `(?:s|es|d|ed|ing)?`
+	if strings.HasSuffix(kw, "e") && len(kw) > 2 {
+		pattern += `|` + regexp.QuoteMeta(kw[:len(kw)-1]) + `ing`
+	}
+	return pattern
+}
+
+func (m keywordMatcher) match(text string) bool {
+	for _, kw := range m.cjk {
 		if strings.Contains(text, kw) {
 			return true
 		}
 	}
-	return false
+	return m.english != nil && m.english.MatchString(text)
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

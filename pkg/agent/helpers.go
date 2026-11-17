@@ -190,7 +190,7 @@ func (a *BaseAgent) executeToolCallsConcurrently(ctx context.Context, toolCalls 
 // displayToolCallsQuiet 静默模式下每个工具调用只打印一行，不做任何光标操作。
 func (a *BaseAgent) displayToolCallsQuiet(toolCalls []openai.ToolCall) {
 	for _, tc := range toolCalls {
-		ui.PrintDim("    ↳ [%s] %s %s\n", a.Name(), tc.Function.Name, toolArgsSummary(tc.Function.Arguments))
+		ui.PrintDim("    ↳ [%s] %s %s", a.Name(), tc.Function.Name, toolArgsSummary(tc.Function.Arguments))
 	}
 }
 
@@ -234,12 +234,11 @@ func (a *BaseAgent) displayToolCallsStart(toolCalls []openai.ToolCall) {
 }
 
 // displayToolCallsResults 显示工具调用结果
+//
+// 不做任何清行或光标上移：工具列表保留在屏幕上供用户回看。
+// 旧实现在此处「清除等待提示」，但等待提示其实在结果之后才打印，
+// 实际被清掉的是工具列表与标题行。
 func (a *BaseAgent) displayToolCallsResults(results []toolCallResult) {
-	// 清除"等待响应..."提示
-	ui.ClearLine()
-	ui.MoveUp(1)
-	ui.ClearLine()
-
 	success := 0
 	failed := 0
 	for _, result := range results {
@@ -334,6 +333,7 @@ func (a *BaseAgent) consumeStream(ctx context.Context, stream *openai.ChatComple
 
 	for {
 		response, recvErr := stream.Recv()
+		a.clearWaiting() // 收到任何响应（含出错）都先擦掉等待状态行
 		if recvErr != nil {
 			if errors.Is(recvErr, io.EOF) {
 				stream.Close()

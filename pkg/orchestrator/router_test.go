@@ -105,3 +105,43 @@ func TestRouter_AllRolesAreReachable(t *testing.T) {
 		}
 	}
 }
+
+// TestRouter_EnglishWordBoundary 英文关键词按整词匹配。
+//
+// 回归背景：子串匹配让 add 命中 address、fix 命中 prefix、patch 命中
+// dispatch_agent、error 命中 errorf，只读请求被误判为写入意图。
+func TestRouter_EnglishWordBoundary(t *testing.T) {
+	r := orchestrator.NewRouter()
+	cases := map[string]string{
+		"review the address parsing":                 "reviewer",
+		"review how prefix matching works":           "reviewer",
+		"review dispatch_agent":                      "reviewer",
+		"what is the errorf convention, research it": "researcher",
+		"什么是 preview 模式":                             "researcher", // preview 不应命中 review
+	}
+	for msg, want := range cases {
+		if got := r.Route(msg); got != want {
+			t.Errorf("Route(%q) = %q, 期望 %q", msg, got, want)
+		}
+	}
+}
+
+// TestRouter_EnglishInflections 常见词形变化仍应命中。
+func TestRouter_EnglishInflections(t *testing.T) {
+	r := orchestrator.NewRouter()
+	coder := []string{
+		"fixing the login flow", "fixed?", "added a flag but", "creating a new handler",
+		"updates needed", "removing dead code", "Fix一下这里", "tests are failing",
+		"debug this panic", "it crashes on start", "Bug in parser",
+	}
+	for _, msg := range coder {
+		if got := r.Route(msg); got != "coder" {
+			t.Errorf("Route(%q) = %q, 期望 coder", msg, got)
+		}
+	}
+	for _, msg := range []string{"reviewing main.go", "please Review一下", "code review"} {
+		if got := r.Route(msg); got != "reviewer" {
+			t.Errorf("Route(%q) = %q, 期望 reviewer", msg, got)
+		}
+	}
+}
