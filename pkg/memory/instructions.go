@@ -10,22 +10,22 @@ import (
 	"strings"
 )
 
-// 指令文件名。每一级目录优先读 MINICODE.md（或 .mini-code/MINICODE.md），
-// 都不存在时依次回退 AGENTS.md、CLAUDE.md，让已有这类文件的仓库直接生效。
+// 指令文件名采用通用的 AGENTS.md 约定（agents.md），不使用 mini-code 专属文件名；
+// 某一级目录没有 AGENTS.md 时回退 CLAUDE.md，让只有它的仓库也能直接生效。
 const (
-	InstructionFile      = "MINICODE.md"
-	LocalInstructionFile = "MINICODE.local.md"
+	InstructionFile      = "AGENTS.md"
+	LocalInstructionFile = "AGENTS.local.md"
 	configDirName        = ".mini-code"
 	maxImportDepth       = 5
 )
 
-var fallbackInstructionFiles = []string{"AGENTS.md", "CLAUDE.md"}
+var fallbackInstructionFiles = []string{"CLAUDE.md"}
 
 // 指令来源层级
 const (
-	LevelUser    = "user"    // ~/.mini-code/MINICODE.md
-	LevelProject = "project" // 工作区及其祖先目录的 MINICODE.md
-	LevelLocal   = "local"   // 工作区 MINICODE.local.md（个人、不提交）
+	LevelUser    = "user"    // ~/.mini-code/AGENTS.md
+	LevelProject = "project" // 工作区及其祖先目录的 AGENTS.md
+	LevelLocal   = "local"   // 工作区 AGENTS.local.md（个人、不提交）
 	LevelRule    = "rule"    // rules/*.md
 	LevelSubdir  = "subdir"  // 访问到子目录时按需加载
 	LevelImport  = "import"  // 经 @path 导入
@@ -72,7 +72,7 @@ func LoadInstructions(home, workspace string) *Instructions {
 }
 
 // loader 负责去重与 @import 展开；visited 以规范化绝对路径为键，
-// 避免同一文件因不同层级（如工作区在 home 下时的 ~/.mini-code/MINICODE.md）被加载两次。
+// 避免同一文件因不同层级（如符号链接或大小写不同的路径）被加载两次。
 type loader struct {
 	home    string
 	visited map[string]bool
@@ -129,19 +129,7 @@ func (l *loader) loadRule(path string, conditional bool) {
 
 // instructionFilesIn 返回某目录下应加载的指令文件（存在才返回）。
 func instructionFilesIn(dir string) []string {
-	var found []string
-	for _, f := range []string{
-		filepath.Join(dir, InstructionFile),
-		filepath.Join(dir, configDirName, InstructionFile),
-	} {
-		if isRegularFile(f) {
-			found = append(found, f)
-		}
-	}
-	if len(found) > 0 {
-		return found
-	}
-	for _, name := range fallbackInstructionFiles {
+	for _, name := range append([]string{InstructionFile}, fallbackInstructionFiles...) {
 		if f := filepath.Join(dir, name); isRegularFile(f) {
 			return []string{f}
 		}

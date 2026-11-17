@@ -49,8 +49,8 @@ func (c *Context) InstructionPath(level string) (string, error) {
 	case LevelUser:
 		return filepath.Join(UserDir(c.home), InstructionFile), nil
 	case LevelProject:
-		// 指向当前实际生效的项目文件：若仓库只有 AGENTS.md / CLAUDE.md，
-		// 新建 MINICODE.md 会让回退文件失效，因此直接写入回退文件。
+		// 指向当前实际生效的项目文件：仓库只有 CLAUDE.md 时直接写入它，
+		// 否则新建的 AGENTS.md 会让 CLAUDE.md 不再被加载。
 		if files := instructionFilesIn(c.workspace); len(files) > 0 {
 			return files[0], nil
 		}
@@ -70,7 +70,7 @@ func (c *Context) PromptSection() string {
 
 	if ins := c.Instructions(); len(ins.Sources) > 0 {
 		sb.WriteString("\n\n## 用户与项目指令\n")
-		sb.WriteString("以下内容来自用户和项目的指令文件（MINICODE.md 等），优先级高于上文的默认行为，必须遵守；" +
+		sb.WriteString("以下内容来自用户和项目的指令文件（AGENTS.md 等），优先级高于上文的默认行为，必须遵守；" +
 			"越靠后的来源越具体，冲突时以靠后者为准。\n")
 		for _, s := range ins.Sources {
 			fmt.Fprintf(&sb, "\n### [%s] %s\n%s\n", levelLabel(s.Level), s.Path, s.Content)

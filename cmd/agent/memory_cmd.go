@@ -18,7 +18,7 @@ const initPrompt = `请分析当前代码库，为它编写项目指令文件，
 
 要求：
 1. 先用 list_files / read_file 了解项目：构建、测试、lint 等常用命令（包括如何运行单个测试），以及需要读多个文件才能理解的高层架构。
-2. 若工作区已有 MINICODE.md，在其基础上改进；否则若已有 AGENTS.md 或 CLAUDE.md，直接改进那个文件（它就是当前生效的项目指令）；都没有则新建 MINICODE.md。
+2. 若工作区已有 AGENTS.md，在其基础上改进；否则若已有 CLAUDE.md，直接改进它（它就是当前生效的项目指令）；都没有则新建 AGENTS.md。
 3. 只写非显然、对以后改代码有用的内容：不要罗列每个文件、不要写通用的开发建议、不要编造仓库里不存在的信息。
 4. 若存在 README、.cursorrules、.github/copilot-instructions.md 等，提炼其中的重要部分。
 5. 保持简洁，使用 Markdown。`

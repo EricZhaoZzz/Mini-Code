@@ -82,8 +82,8 @@ CLI → Orchestrator.Handle → Router 选 agent 类型
 - **上下文压缩在 Orchestrator 而非 Agent**：Agent 无跨轮状态，压缩若放进 Run 会每轮重复触发。
   默认预算 96k token，保留 system + 最近 12 条，摘要写回 Session 供下次合并；调用 LLM 失败时
   静默放弃压缩，不阻塞主流程。
-- **记忆**：指令文件 `~/.mini-code/MINICODE.md` → 根到工作区各级 `MINICODE.md`（回退 AGENTS.md / CLAUDE.md）
-  → `MINICODE.local.md` → `rules/*.md`，支持 `@path` 导入，子目录与 `paths:` 条件规则由文件工具按需注入；
+- **记忆**：指令文件 `~/.mini-code/AGENTS.md` → 根到工作区各级 `AGENTS.md`（无则回退 CLAUDE.md）
+  → `AGENTS.local.md` → `rules/*.md`，支持 `@path` 导入，子目录与 `paths:` 条件规则由文件工具按需注入；
   自动记忆在 `~/.mini-code/projects/<slug>/memory/`（每条一个 md + `MEMORY.md` 索引），经 remember/recall/forget 读写。
   详见 CLAUDE.md。
 - **工具系统**：`registry.go` 的 `init()` 注册；参数结构体同时使用

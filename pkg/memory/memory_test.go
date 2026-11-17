@@ -32,21 +32,19 @@ func TestLoadInstructions_HierarchyOrder(t *testing.T) {
 	root := t.TempDir()
 	ws := filepath.Join(root, "repo")
 
-	writeFile(t, filepath.Join(home, ".mini-code", "MINICODE.md"), "user rule")
-	writeFile(t, filepath.Join(root, "MINICODE.md"), "parent rule")
-	writeFile(t, filepath.Join(ws, "MINICODE.md"), "project rule")
-	writeFile(t, filepath.Join(ws, ".mini-code", "MINICODE.md"), "project dot rule")
-	writeFile(t, filepath.Join(ws, "MINICODE.local.md"), "local rule")
+	writeFile(t, filepath.Join(home, ".mini-code", "AGENTS.md"), "user rule")
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "parent rule")
+	writeFile(t, filepath.Join(ws, "AGENTS.md"), "project rule")
+	writeFile(t, filepath.Join(ws, "AGENTS.local.md"), "local rule")
 	writeFile(t, filepath.Join(ws, ".mini-code", "rules", "style.md"), "always rule")
 	writeFile(t, filepath.Join(ws, ".mini-code", "rules", "go.md"), "---\npaths:\n  - \"**/*.go\"\n---\ngo only")
 
 	got := sourcePaths(LoadInstructions(home, ws))
 	want := []string{
-		"user:.mini-code/MINICODE.md",
-		"project:" + filepath.Base(root) + "/MINICODE.md",
-		"project:repo/MINICODE.md",
-		"project:.mini-code/MINICODE.md",
-		"local:repo/MINICODE.local.md",
+		"user:.mini-code/AGENTS.md",
+		"project:" + filepath.Base(root) + "/AGENTS.md",
+		"project:repo/AGENTS.md",
+		"local:repo/AGENTS.local.md",
 		"rule:rules/style.md",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
@@ -56,25 +54,24 @@ func TestLoadInstructions_HierarchyOrder(t *testing.T) {
 
 func TestLoadInstructions_FallbackFiles(t *testing.T) {
 	ws := t.TempDir()
-	writeFile(t, filepath.Join(ws, "AGENTS.md"), "agents")
 	writeFile(t, filepath.Join(ws, "CLAUDE.md"), "claude")
 
 	ins := LoadInstructions(t.TempDir(), ws)
-	if len(ins.Sources) != 1 || ins.Sources[0].Content != "agents" {
-		t.Fatalf("expected only AGENTS.md, got %v", sourcePaths(ins))
+	if len(ins.Sources) != 1 || ins.Sources[0].Content != "claude" {
+		t.Fatalf("expected CLAUDE.md fallback, got %v", sourcePaths(ins))
 	}
 
-	writeFile(t, filepath.Join(ws, "MINICODE.md"), "mini")
+	writeFile(t, filepath.Join(ws, "AGENTS.md"), "agents")
 	ins = LoadInstructions(t.TempDir(), ws)
-	if len(ins.Sources) != 1 || ins.Sources[0].Content != "mini" {
-		t.Fatalf("MINICODE.md should take precedence, got %v", sourcePaths(ins))
+	if len(ins.Sources) != 1 || ins.Sources[0].Content != "agents" {
+		t.Fatalf("AGENTS.md should take precedence, got %v", sourcePaths(ins))
 	}
 }
 
 func TestLoadInstructions_HomeAncestorNotDuplicated(t *testing.T) {
 	home := t.TempDir()
 	ws := filepath.Join(home, "proj")
-	writeFile(t, filepath.Join(home, ".mini-code", "MINICODE.md"), "user rule")
+	writeFile(t, filepath.Join(home, ".mini-code", "AGENTS.md"), "user rule")
 	os.MkdirAll(ws, 0o755)
 
 	ins := LoadInstructions(home, ws)
@@ -86,7 +83,7 @@ func TestLoadInstructions_HomeAncestorNotDuplicated(t *testing.T) {
 func TestImports(t *testing.T) {
 	home := t.TempDir()
 	ws := t.TempDir()
-	writeFile(t, filepath.Join(ws, "MINICODE.md"), strings.Join([]string{
+	writeFile(t, filepath.Join(ws, "AGENTS.md"), strings.Join([]string{
 		"see @docs/a.md and @~/personal.md",
 		"mail me at foo@bar.com",
 		"`@docs/inline.md`",
@@ -125,7 +122,7 @@ func TestImports(t *testing.T) {
 
 func TestImports_MaxDepth(t *testing.T) {
 	ws := t.TempDir()
-	writeFile(t, filepath.Join(ws, "MINICODE.md"), "@f1.md")
+	writeFile(t, filepath.Join(ws, "AGENTS.md"), "@f1.md")
 	for i := 1; i <= 7; i++ {
 		writeFile(t, filepath.Join(ws, fmt.Sprintf("f%d.md", i)), fmt.Sprintf("level %d @f%d.md", i, i+1))
 	}
@@ -158,8 +155,8 @@ func TestMatchGlob(t *testing.T) {
 func TestLazyLoader(t *testing.T) {
 	home := t.TempDir()
 	ws := t.TempDir()
-	writeFile(t, filepath.Join(ws, "MINICODE.md"), "root rule")
-	writeFile(t, filepath.Join(ws, "pkg", "MINICODE.md"), "pkg rule @../MINICODE.md")
+	writeFile(t, filepath.Join(ws, "AGENTS.md"), "root rule")
+	writeFile(t, filepath.Join(ws, "pkg", "AGENTS.md"), "pkg rule @../AGENTS.md")
 	writeFile(t, filepath.Join(ws, "pkg", "sub", "x.go"), "package sub")
 	writeFile(t, filepath.Join(ws, "pkg", "sub", "y.txt"), "text")
 	writeFile(t, filepath.Join(ws, ".mini-code", "rules", "go.md"), "---\npaths: \"**/*.go\"\n---\ngo rule")
@@ -259,7 +256,7 @@ func TestProjectSlug(t *testing.T) {
 func TestPromptSection(t *testing.T) {
 	home := t.TempDir()
 	ws := t.TempDir()
-	writeFile(t, filepath.Join(ws, "MINICODE.md"), "使用 pnpm")
+	writeFile(t, filepath.Join(ws, "AGENTS.md"), "使用 pnpm")
 	c, err := NewContext(home, ws)
 	if err != nil {
 		t.Fatal(err)
@@ -283,11 +280,11 @@ func TestInstructionPath_ProjectUsesEffectiveFile(t *testing.T) {
 	c, _ := NewContext(t.TempDir(), ws)
 	p, _ := c.InstructionPath(LevelProject)
 	if filepath.Base(p) != InstructionFile {
-		t.Errorf("default should be MINICODE.md, got %s", p)
+		t.Errorf("default should be AGENTS.md, got %s", p)
 	}
-	writeFile(t, filepath.Join(ws, "AGENTS.md"), "x")
+	writeFile(t, filepath.Join(ws, "CLAUDE.md"), "x")
 	p, _ = c.InstructionPath(LevelProject)
-	if filepath.Base(p) != "AGENTS.md" {
+	if filepath.Base(p) != "CLAUDE.md" {
 		t.Errorf("should target existing fallback file, got %s", p)
 	}
 }

@@ -62,7 +62,7 @@ pkg/sandbox/             L2 OS 沙箱（Linux Landlock / macOS Seatbelt / 其他
 pkg/channel/             Channel IO 接口（types.go）；cli/ 为 readline REPL
 pkg/orchestrator/        Session 管理、关键词路由、上下文压缩、SessionSnapshot（热重启交接）
 pkg/agent/               BaseAgent + coder/reviewer/researcher 专化预设；prompt.go 构建系统提示（含记忆注入）；context.go token 估算
-pkg/memory/              多级指令文件（MINICODE.md 层级 / @import / rules / 子目录按需加载）+ 文件式自动记忆
+pkg/memory/              多级指令文件（AGENTS.md 层级 / @import / rules / 子目录按需加载）+ 文件式自动记忆
 pkg/provider/            Provider 接口；openai.go / pie_gateway.go
 pkg/supervisor/          TCP 控制协议（control.go）与 worker 侧客户端（worker_runtime.go）
 pkg/tools/               工具注册、执行、工作区校验、shell 防护
@@ -115,7 +115,7 @@ CLI → Orchestrator.HandleMessage → Router 选 agent 类型
   同一轮多个 tool_call 并发（`maxConcurrency=5`），全部完成后进入下一轮；非流式路径（handler=nil）仅供测试。
 
 - **记忆仿 Claude Code，分两块**（`pkg/memory`，入口 `memory.Context`，所有方法 nil 安全）
-  - 指令记忆（人写，常驻系统提示）：`~/.mini-code/MINICODE.md` → 文件系统根到工作区每级的 `MINICODE.md` / `.mini-code/MINICODE.md` → `MINICODE.local.md` → `rules/*.md`（用户级与项目级 `.mini-code/rules/`）。每级无 MINICODE.md 时回退 `AGENTS.md`，再回退 `CLAUDE.md`（本仓库即加载 AGENTS.md）。支持 `@path` 导入（最深 5 层，跳过代码块）。
+  - 指令记忆（人写，常驻系统提示）：`~/.mini-code/AGENTS.md` → 文件系统根到工作区每级的 `AGENTS.md` → `AGENTS.local.md` → `rules/*.md`（用户级与项目级 `.mini-code/rules/`）。采用通用 agents.md 约定，不用专属文件名；某级无 AGENTS.md 时回退 `CLAUDE.md`（因此本仓库的 CLAUDE.md 不会被 mini-code 加载）。支持 `@path` 导入（最深 5 层，跳过代码块）。
   - 按需加载：文件工具（read/write/replace/list）访问子目录时，`LazyLoader` 把该子目录链上的指令文件与 `paths:` 匹配的条件规则附在工具结果末尾，每会话每文件只注入一次；reset / resume / 上下文压缩后清空记录。
   - 自动记忆（模型写）：`~/.mini-code/projects/<工作区slug>/memory/`，一条一个 md（frontmatter: name/description/type∈user|feedback|project|reference）+ `MEMORY.md` 索引（前 200 行注入）。仅经 `remember/recall/forget` 读写，不放宽文件工具的工作区边界。
   - Orchestrator 每次任务前从磁盘重建系统提示，编辑指令文件或 remember 后无需重启。

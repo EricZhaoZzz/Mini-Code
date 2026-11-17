@@ -98,7 +98,7 @@ func TestReadFile_InjectsSubdirInstructionsOnce(t *testing.T) {
 	t.Cleanup(func() { tools.SetMemory(nil) })
 
 	os.MkdirAll(filepath.Join(root, "sub"), 0o755)
-	os.WriteFile(filepath.Join(root, "sub", "MINICODE.md"), []byte("子目录规则：禁止 panic"), 0o644)
+	os.WriteFile(filepath.Join(root, "sub", "AGENTS.md"), []byte("子目录规则：禁止 panic"), 0o644)
 	os.WriteFile(filepath.Join(root, "sub", "a.go"), []byte("package sub\n"), 0o644)
 
 	first, err := runTool(t, "read_file", map[string]interface{}{"path": "sub/a.go"})
