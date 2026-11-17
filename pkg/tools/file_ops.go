@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,10 +91,6 @@ func DeleteFile(args interface{}) (interface{}, error) {
 		return nil, err
 	}
 
-	if !params.Confirm {
-		return nil, fmt.Errorf("删除操作需要确认，请将 confirm 参数设为 true")
-	}
-
 	targetPath, err := resolveWorkspacePath(params.Path)
 	if err != nil {
 		return nil, err
@@ -129,6 +126,15 @@ func DeleteFile(args interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("目录不为空，需要设置 recursive=true 来递归删除")
 		}
 
+		prompt := fmt.Sprintf("删除空目录 %s", displayPath(targetPath))
+		if !isEmpty {
+			count, _ := countFiles(targetPath)
+			prompt = fmt.Sprintf("递归删除目录 %s（含 %d 个文件）", displayPath(targetPath), count)
+		}
+		if err := confirmDeletion(prompt, params.Confirm); err != nil {
+			return nil, err
+		}
+
 		if err := os.RemoveAll(targetPath); err != nil {
 			return nil, fmt.Errorf("删除目录失败: %w", err)
 		}
@@ -136,6 +142,12 @@ func DeleteFile(args interface{}) (interface{}, error) {
 	}
 
 	// 删除文件
+	if err := confirmDeletion(
+		fmt.Sprintf("删除文件 %s（%d 字节）", displayPath(targetPath), info.Size()),
+		params.Confirm,
+	); err != nil {
+		return nil, err
+	}
 	if err := os.Remove(targetPath); err != nil {
 		return nil, fmt.Errorf("删除文件失败: %w", err)
 	}
@@ -440,4 +452,41 @@ func copyFileRecursive(src, dst string) error {
 	}
 
 	return copyFileAtomic(src, dst)
+}
+
+// confirmDeletion 删除前确认。
+//
+// 有交互终端时必须由用户本人确认 —— confirm 参数由模型填写，
+// 模型想删就能填 true，起不到任何防护作用。
+// 未注入确认处理器时（单测、非交互环境）回退为校验 confirm 参数。
+func confirmDeletion(prompt string, modelConfirmed bool) error {
+	interactive, approved, err := askUser(prompt)
+	if err != nil {
+		return err
+	}
+	if interactive {
+		if !approved {
+			return fmt.Errorf("用户拒绝了该操作: %s", prompt)
+		}
+		return nil
+	}
+	if !modelConfirmed {
+		return fmt.Errorf("删除操作需要确认，请将 confirm 参数设为 true")
+	}
+	return nil
+}
+
+// countFiles 统计目录下的文件数（不含目录本身），用于确认提示。
+func countFiles(root string) (int, error) {
+	count := 0
+	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			count++
+		}
+		return nil
+	})
+	return count, err
 }

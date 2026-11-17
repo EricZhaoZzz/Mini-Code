@@ -16,3 +16,16 @@ func TestCLIChannel_ChannelID(t *testing.T) {
 		t.Errorf("expected ChannelID 'cli', got %q", ch.ChannelID())
 	}
 }
+
+func TestIsAffirmative(t *testing.T) {
+	for _, s := range []string{"y", "Y", " yes ", "YES", "是"} {
+		if !cli.IsAffirmative(s) {
+			t.Errorf("%q 应视为同意", s)
+		}
+	}
+	for _, s := range []string{"", "n", "no", "ok", "yy", "确认吗", "y es"} {
+		if cli.IsAffirmative(s) {
+			t.Errorf("%q 不应视为同意", s)
+		}
+	}
+}

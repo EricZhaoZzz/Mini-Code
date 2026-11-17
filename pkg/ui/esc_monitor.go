@@ -96,6 +96,21 @@ func (m *EscMonitor) Stop() {
 	m.mu.Unlock()
 }
 
+// Pause 临时停止监控并返回恢复函数；未在运行时返回空操作。
+//
+// 用于任务中途需要读取用户整行输入（如删除确认）的场景：
+// 监控运行时终端处于 raw 模式且会消费按键事件，会与 readline 争抢输入。
+func (m *EscMonitor) Pause() (resume func()) {
+	m.mu.Lock()
+	running := m.running
+	m.mu.Unlock()
+	if !running {
+		return func() {}
+	}
+	m.Stop()
+	return m.Start
+}
+
 // IsCancelled 返回是否已取消
 func (m *EscMonitor) IsCancelled() bool {
 	m.mu.Lock()

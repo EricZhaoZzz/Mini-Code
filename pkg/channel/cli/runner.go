@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"mini-code/pkg/channel"
 	"mini-code/pkg/ui"
+	"strings"
 
 	"github.com/ergochat/readline"
 )
@@ -55,6 +56,39 @@ func (c *CLIChannel) Start(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+// Confirm 在任务执行中向用户请求 y/n 确认。
+//
+// 任务执行期间主循环阻塞在 Orchestrator.Handle 上，而 Start 循环仍在
+// 读取下一行输入，因此直接从 messages 通道取用户的下一行作为回答，
+// 无需与 readline 争抢 stdin。确认期间关闭历史记录，避免 y/n 污染历史。
+// 只有明确输入 y/yes/是 才视为同意，其余一律拒绝。
+func (c *CLIChannel) Confirm(ctx context.Context, prompt string) (bool, error) {
+	c.rl.DisableHistory()
+	defer c.rl.EnableHistory()
+
+	fmt.Fprintf(c.rl.Stdout(), "\n%s\n", ui.SprintColor(ui.Warning, "⚠ 需要确认: "+prompt))
+	fmt.Fprintf(c.rl.Stdout(), "%s\n", ui.SprintColor(ui.Dim, "  输入 y 确认，其他任意内容取消，然后回车"))
+
+	select {
+	case msg, ok := <-c.messages:
+		if !ok {
+			return false, fmt.Errorf("输入已关闭")
+		}
+		return IsAffirmative(msg.Text), nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// IsAffirmative 判断用户回答是否为明确同意。
+func IsAffirmative(answer string) bool {
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes", "是":
+		return true
+	}
+	return false
 }
 
 // Send 发送文本响应

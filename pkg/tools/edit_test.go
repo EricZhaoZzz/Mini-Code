@@ -7,43 +7,6 @@ import (
 	"testing"
 )
 
-func TestReplaceInFileReplacesOnlyFirstMatch(t *testing.T) {
-	workspace := t.TempDir()
-	restore := chdirForTest(t, workspace)
-	defer restore()
-
-	path := filepath.Join(workspace, "sample.txt")
-	original := "hello x\nhello x\n"
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	result, err := ReplaceInFile(ReplaceInFileArguments{
-		Path: "sample.txt",
-		Old:  "x",
-		New:  "y",
-	})
-	if err != nil {
-		t.Fatalf("replace failed: %v", err)
-	}
-
-	gotResult := result.(string)
-	if gotResult != "已替换文件内容: sample.txt" {
-		t.Fatalf("unexpected replace result: %q", gotResult)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read failed: %v", err)
-	}
-
-	got := string(data)
-	want := "hello y\nhello x\n"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
 func TestReplaceInFileFailsWhenOldNotFound(t *testing.T) {
 	workspace := t.TempDir()
 	restore := chdirForTest(t, workspace)
@@ -438,40 +401,6 @@ func TestReplaceInFileSpecialCharacters(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestReplaceInFileOnlyFirstMatch(t *testing.T) {
-	workspace := t.TempDir()
-	restore := chdirForTest(t, workspace)
-	defer restore()
-
-	// 创建包含多个匹配的文件
-	content := "foo bar foo bar foo"
-	if err := os.WriteFile(filepath.Join(workspace, "test.txt"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	// 替换，应该只替换第一个匹配
-	result, err := ReplaceInFile(ReplaceInFileArguments{
-		Path: "test.txt",
-		Old:  "foo",
-		New:  "baz",
-	})
-	if err != nil {
-		t.Fatalf("expected replace to succeed, got error: %v", err)
-	}
-
-	// 验证只替换了第一个
-	data, err := os.ReadFile(filepath.Join(workspace, "test.txt"))
-	if err != nil {
-		t.Fatalf("read failed: %v", err)
-	}
-	expected := "baz bar foo bar foo"
-	if string(data) != expected {
-		t.Fatalf("expected %q, got: %q", expected, string(data))
-	}
-
-	_ = result
 }
 
 func TestReplaceInFileReturnsRelativePath(t *testing.T) {

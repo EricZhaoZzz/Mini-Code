@@ -517,6 +517,14 @@ func runWorker(options workerOptions) error {
 		os.Exit(0)
 	}()
 
+	// 危险操作（如 delete_file）必须由用户本人确认，而不是模型自己填 confirm=true
+	tools.SetConfirmHandler(func(prompt string) (bool, error) {
+		resume := ui.GlobalEscMonitor.Pause()
+		defer resume()
+		return cliCh.Confirm(ctx, prompt)
+	})
+	defer tools.SetConfirmHandler(nil)
+
 	printWelcome()
 	go cliCh.Start(ctx)
 

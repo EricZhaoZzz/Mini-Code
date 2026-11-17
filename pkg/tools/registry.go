@@ -18,11 +18,11 @@ func init() {
 	register("list_files", "列出目录下的文件", ListFilesArguments{}, ListFiles)
 	register("search_in_files", "在目录下按字面文本搜索（非正则）", SearchInFilesArguments{}, SearchInFiles)
 	register("run_shell", "在工作区目录运行 shell 命令（默认 120 秒超时；可访问工作区外，勿用于绕过路径限制）", RunShellArguments{}, RunShell)
-	register("replace_in_file", "在文件中局部替换文本：old 必须与原文逐字一致，只替换第一个匹配项", ReplaceInFileArguments{}, ReplaceInFile)
+	register("replace_in_file", "在文件中局部替换文本：old 必须与原文逐字一致且唯一；需要批量替换时设置 replace_all=true", ReplaceInFileArguments{}, ReplaceInFile)
 
 	// 文件操作扩展
 	register("rename_file", "重命名/移动文件或目录", RenameFileArguments{}, RenameFile)
-	register("delete_file", "删除文件或目录（需要确认）", DeleteFileArguments{}, DeleteFile)
+	register("delete_file", "删除文件或目录（交互模式下会请求用户确认）", DeleteFileArguments{}, DeleteFile)
 	register("copy_file", "复制文件或目录", CopyFileArguments{}, CopyFile)
 	register("create_directory", "创建目录", CreateDirectoryArguments{}, CreateDirectory)
 	register("get_file_info", "获取文件或目录的详细信息（包括大小、修改时间、SHA256等）", GetFileInfoArguments{}, GetFileInfo)
